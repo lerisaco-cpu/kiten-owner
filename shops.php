@@ -158,7 +158,7 @@ render_head('店舗管理', 'shops');
         <tr>
             <th style="width:64px"><?= sort_link('id', 'ID') ?></th>
             <th style="min-width:150px"><?= sort_link('name', '店舗名') ?></th>
-            <th style="width:200px">ログインID</th>
+            <th style="width:260px">ログインID</th>
             <th style="width:170px">フォルダ名</th>
             <th style="width:140px">IP</th>
             <th style="width:100px"><?= sort_link('plan', 'プラン') ?></th>

@@ -442,4 +442,4 @@ a:hover { text-decoration: underline; }
 .toast-area .alert-box { margin: 0; box-shadow: 0 4px 16px rgba(0, 0, 0, .14); }
 
 /* 店舗一覧は列が多いので、詰めるより横スクロールさせる（.table-scroll の中） */
-#shop-table { min-width: 1300px; }
+#shop-table { min-width: 1500px; }
