@@ -54,6 +54,7 @@ $sort = $_GET['sort'] ?? 'id';
 $col  = $sortMap[$sort] ?? 'u.user_id';
 $dir  = (($_GET['dir'] ?? 'asc') === 'desc') ? 'DESC' : 'ASC';
 
+$canEditMeta    = can_edit();   // 一覧のインライン編集を出すかどうか
 $hasStatusTable = table_exists('exec_status');
 $joinStatus = $hasStatusTable ? 'LEFT JOIN exec_status s ON s.user_id = u.user_id' : '';
 $selStatus  = $hasStatusTable ? 's.last_success_at, s.fail_streak,' : '';
@@ -79,6 +80,24 @@ $rows = q(
       LIMIT $perPage OFFSET " . (($page - 1) * $perPage),
     $params
 );
+
+/**
+ * フォルダ名 / IP のセル。編集できるときは、JS が使う値を data-* に持たせる。
+ * 表示値は h()、data-value も h() を通すので、どちらもそのまま出ることはない。
+ */
+function meta_cell(int $userId, string $field, string $value, int $maxLen, bool $editable): string
+{
+    $shown = $value !== '' ? h($value) : '<span class="soft">—</span>';
+    if (!$editable) {
+        return '<td class="wrapcell">' . $shown . '</td>';
+    }
+    return '<td class="wrapcell meta-cell"'
+         . ' data-id="' . $userId . '"'
+         . ' data-field="' . h($field) . '"'
+         . ' data-value="' . h($value) . '"'
+         . ' data-max="' . $maxLen . '"'
+         . ' title="ダブルクリックで編集">' . $shown . '</td>';
+}
 
 function sort_link(string $key, string $labelText): string
 {
@@ -125,13 +144,16 @@ render_head('店舗管理', 'shops');
 <div class="section-card">
     <div class="head">
         <i class="fa-solid fa-users"></i>店舗一覧
+        <?php if ($canEditMeta): ?>
+            <span class="head-hint">フォルダ名 / IP はダブルクリックで編集できます</span>
+        <?php endif; ?>
         <span class="count">全 <?= number_format($total) ?> 件</span>
     </div>
     <?php if (!$rows): ?>
         <div class="empty"><i class="fa-solid fa-magnifying-glass"></i>条件に合う店舗はありません。条件を変えて検索してください。</div>
     <?php else: ?>
     <div class="table-scroll">
-    <table class="data-table">
+    <table class="data-table" id="shop-table"<?= $canEditMeta ? ' data-csrf="' . h(csrf_token()) . '"' : '' ?>>
         <thead>
         <tr>
             <th style="width:64px"><?= sort_link('id', 'ID') ?></th>
@@ -169,8 +191,8 @@ render_head('店舗管理', 'shops');
                     <span class="badge <?= $isActive ? 'badge-active' : 'badge-inactive' ?>"><?= h(label_of('status_labels', $r['status'])) ?></span>
                 </td>
                 <td><?= h($r['tantou']) ?></td>
-                <td class="wrapcell"><?= $folder !== '' ? h($folder) : '<span class="soft">—</span>' ?></td>
-                <td class="wrapcell"><?= $ipAddr !== '' ? h($ipAddr) : '<span class="soft">—</span>' ?></td>
+                <?= meta_cell($r['user_id'], 'folder_name', $folder, 191, $canEditMeta) ?>
+                <?= meta_cell($r['user_id'], 'ip_address', $ipAddr, 45, $canEditMeta) ?>
                 <td>
                     <?php if ($validSrv): ?>
                         <?= (int)$r['exeserver'] ?>
@@ -202,5 +224,133 @@ render_head('店舗管理', 'shops');
     <?php render_pager($page, $total, $perPage); ?>
     <?php endif; ?>
 </div>
+
+<?php if ($canEditMeta): ?>
+<div class="toast-area" id="toast-area"></div>
+<script>
+(function () {
+    var table = document.getElementById('shop-table');
+    if (!table) { return; }
+    var csrf = table.getAttribute('data-csrf');
+    var area = document.getElementById('toast-area');
+
+    /** 右下に数秒だけ出す通知。保存の失敗理由をここに出す。 */
+    function toast(msg, type) {
+        var box = document.createElement('div');
+        box.className = 'alert-box alert-' + type;
+        box.textContent = msg;
+        area.appendChild(box);
+        setTimeout(function () { box.remove(); }, 6000);
+    }
+
+    /** セルを通常の表示状態に戻す。値は data-value が正。 */
+    function render(td) {
+        var v = td.getAttribute('data-value');
+        td.textContent = '';
+        if (v === '') {
+            var s = document.createElement('span');
+            s.className = 'soft';
+            s.textContent = '—';
+            td.appendChild(s);
+        } else {
+            td.appendChild(document.createTextNode(v));
+        }
+    }
+
+    function flash(td, cls) {
+        td.classList.add(cls);
+        setTimeout(function () { td.classList.remove(cls); }, 2000);
+    }
+
+    function beginEdit(td) {
+        if (td.classList.contains('is-editing') || td.classList.contains('is-saving')) { return; }
+        td.classList.add('is-editing');
+
+        var input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'meta-input';
+        input.value = td.getAttribute('data-value');
+        input.maxLength = parseInt(td.getAttribute('data-max'), 10) || 191;
+        td.textContent = '';
+        td.appendChild(input);
+        input.focus();
+        input.select();
+
+        var done = false;
+        function finish(save) {
+            if (done) { return; }
+            done = true;
+            var next = input.value;
+            td.classList.remove('is-editing');
+            if (!save || next === td.getAttribute('data-value')) {
+                render(td);           // Esc、または変更なし
+                return;
+            }
+            commit(td, next);
+        }
+        input.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+            else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+        });
+        input.addEventListener('blur', function () { finish(true); });
+    }
+
+    function commit(td, value) {
+        td.classList.add('is-saving');
+        td.textContent = value === '' ? '—' : value;
+
+        var body = new URLSearchParams();
+        body.set('_csrf', csrf);
+        body.set('user_id', td.getAttribute('data-id'));
+        body.set('field', td.getAttribute('data-field'));
+        body.set('value', value);
+
+        fetch('api_shop_meta.php', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+            body: body.toString()
+        }).then(function (res) {
+            return res.text().then(function (text) {
+                var data = null;
+                try { data = JSON.parse(text); } catch (e) { /* JSON以外はそのまま理由として扱う */ }
+                if (!res.ok || !data || !data.ok) {
+                    // サーバーが返した理由をそのまま利用者に見せる
+                    var err = new Error(
+                        (data && data.error) ||
+                        text.trim().slice(0, 200) ||
+                        ('保存できませんでした（HTTP ' + res.status + '）。')
+                    );
+                    err.fromServer = true;
+                    throw err;
+                }
+                return data;
+            });
+        }).then(function (data) {
+            td.classList.remove('is-saving');
+            td.setAttribute('data-value', data.value);   // 桁数を超えた分はサーバー側で切られる
+            render(td);
+            flash(td, 'is-saved');
+        }).catch(function (err) {
+            td.classList.remove('is-saving');
+            render(td);                                  // data-value は変えていないので元の値に戻る
+            flash(td, 'is-error');
+            // 通信そのものが失敗した場合、err.message はブラウザ既定の英文なので出さない
+            toast(
+                (err && err.fromServer && err.message)
+                    ? err.message
+                    : '保存できませんでした。通信の状態を確認して、もう一度お試しください。',
+                'bad'
+            );
+        });
+    }
+
+    table.addEventListener('dblclick', function (e) {
+        var td = e.target.closest('td.meta-cell');
+        if (td) { beginEdit(td); }
+    });
+})();
+</script>
+<?php endif; ?>
 
 <?php render_foot(); ?>
