@@ -8,8 +8,14 @@ $perPage     = (int)cfg('per_page', 50);
 $page        = max(1, (int)($_GET['page'] ?? 1));
 
 $kw     = trim((string)($_GET['kw'] ?? ''));
-$status = $_GET['status'] ?? '';
 $plan   = $_GET['plan'] ?? '';
+
+// 契約状況は「未指定＝契約中のみ」を初期値にする。
+// 全件を見たいときは 'all' を明示的に選んでもらう（空文字だと url_with() で
+// 落ちてしまい、ページングや並び替えで初期値に戻ってしまうため）。
+const STATUS_ALL = 'all';
+$statusParam = (string)($_GET['status'] ?? '');
+$status = $statusParam === '' ? (string)$activeValue : $statusParam;
 
 $where  = [];
 $params = [];
@@ -19,7 +25,7 @@ if ($kw !== '') {
     $like = '%' . $kw . '%';
     array_push($params, $like, $like, $like, $like, (int)$kw);
 }
-if ($status !== '') {
+if ($status !== STATUS_ALL) {
     $where[] = 'u.status = ?';
     $params[] = (int)$status;
 }
@@ -87,9 +93,9 @@ render_head('店舗管理', 'shops');
         <div class="filter-field">
             <label for="status">契約状況</label>
             <select id="status" name="status">
-                <option value="">すべて</option>
+                <option value="<?= STATUS_ALL ?>"<?= $status === STATUS_ALL ? ' selected' : '' ?>>すべて</option>
                 <?php foreach ((array)cfg('status_labels', []) as $v => $lbl): ?>
-                    <option value="<?= (int)$v ?>"<?= $status !== '' && (int)$status === (int)$v ? ' selected' : '' ?>><?= h($lbl) ?></option>
+                    <option value="<?= (int)$v ?>"<?= $status !== STATUS_ALL && (int)$status === (int)$v ? ' selected' : '' ?>><?= h($lbl) ?></option>
                 <?php endforeach; ?>
             </select>
         </div>
