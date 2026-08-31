@@ -61,36 +61,33 @@ function ago(?string $datetime): string
 function render_pager(int $page, int $total, int $perPage): void
 {
     $last = max(1, (int)ceil($total / $perPage));
-    if ($last <= 1) {
-        return;
-    }
-    $from = max(1, $page - 3);
-    $to   = min($last, $page + 3);
-
-    echo '<nav class="pager"><ul class="pagination pagination-sm mb-0">';
-    if ($page > 1) {
-        echo '<li class="page-item"><a class="page-link" href="' . h(url_with(['page' => $page - 1])) . '">前へ</a></li>';
-    }
-    if ($from > 1) {
-        echo '<li class="page-item"><a class="page-link" href="' . h(url_with(['page' => 1])) . '">1</a></li>';
-        if ($from > 2) {
-            echo '<li class="page-item disabled"><span class="page-link">…</span></li>';
+    echo '<div class="pager"><ul>';
+    if ($last > 1) {
+        $from = max(1, $page - 3);
+        $to   = min($last, $page + 3);
+        if ($page > 1) {
+            echo '<li><a href="' . h(url_with(['page' => $page - 1])) . '">前へ</a></li>';
+        }
+        if ($from > 1) {
+            echo '<li><a href="' . h(url_with(['page' => 1])) . '">1</a></li>';
+            if ($from > 2) {
+                echo '<li class="off"><span>…</span></li>';
+            }
+        }
+        for ($i = $from; $i <= $to; $i++) {
+            echo '<li' . ($i === $page ? ' class="on"' : '') . '><a href="' . h(url_with(['page' => $i])) . '">' . $i . '</a></li>';
+        }
+        if ($to < $last) {
+            if ($to < $last - 1) {
+                echo '<li class="off"><span>…</span></li>';
+            }
+            echo '<li><a href="' . h(url_with(['page' => $last])) . '">' . $last . '</a></li>';
+        }
+        if ($page < $last) {
+            echo '<li><a href="' . h(url_with(['page' => $page + 1])) . '">次へ</a></li>';
         }
     }
-    for ($i = $from; $i <= $to; $i++) {
-        $active = $i === $page ? ' active' : '';
-        echo '<li class="page-item' . $active . '"><a class="page-link" href="' . h(url_with(['page' => $i])) . '">' . $i . '</a></li>';
-    }
-    if ($to < $last) {
-        if ($to < $last - 1) {
-            echo '<li class="page-item disabled"><span class="page-link">…</span></li>';
-        }
-        echo '<li class="page-item"><a class="page-link" href="' . h(url_with(['page' => $last])) . '">' . $last . '</a></li>';
-    }
-    if ($page < $last) {
-        echo '<li class="page-item"><a class="page-link" href="' . h(url_with(['page' => $page + 1])) . '">次へ</a></li>';
-    }
-    echo '</ul><span class="pager-count">' . number_format($total) . '件</span></nav>';
+    echo '</ul><span class="count">全 ' . number_format($total) . ' 件</span></div>';
 }
 
 /** 認証情報のマスク表示。伏せ字にして、長さだけ分かるようにする。 */

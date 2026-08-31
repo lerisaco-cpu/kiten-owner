@@ -6,10 +6,10 @@ require_login();
 if (!table_exists('exec_log')) {
     render_head('稼働ログ', 'logs');
     ?>
-    <div class="notice notice-warn">実行ログのテーブルがまだありません。</div>
-    <div class="panel">
-        <h2>この画面を動かすには</h2>
-        <div class="panel-body">
+    <div class="alert-box alert-warn"><i class="fa-solid fa-triangle-exclamation"></i><div>実行ログのテーブルがまだありません。</div></div>
+    <div class="section-card">
+        <div class="head"><i class="fa-solid fa-circle-info"></i>この画面を動かすには</div>
+        <div class="body">
             <p>今のデータベースには、いつ何が動いたかの記録が残っていません。次の2つが揃うと、この画面に稼働状況が出ます。</p>
             <ol>
                 <li>phpMyAdmin で <code>sql/schema.sql</code> を実行し、<code>exec_log</code> と <code>exec_status</code> を作る</li>
@@ -66,63 +66,87 @@ $jobTypes = q('SELECT DISTINCT job_type FROM exec_log ORDER BY job_type');
 render_head('稼働ログ', 'logs');
 ?>
 
-<form class="filters" method="get" action="logs.php">
-    <select name="days">
-        <?php foreach ([1 => '過去1日', 3 => '過去3日', 7 => '過去7日', 30 => '過去30日'] as $v => $lbl): ?>
-            <option value="<?= $v ?>"<?= $days === $v ? ' selected' : '' ?>><?= h($lbl) ?></option>
-        <?php endforeach; ?>
-    </select>
-    <select name="result">
-        <option value="">結果すべて</option>
-        <option value="1"<?= $result === '1' ? ' selected' : '' ?>>成功</option>
-        <option value="0"<?= $result === '0' ? ' selected' : '' ?>>失敗</option>
-        <option value="2"<?= $result === '2' ? ' selected' : '' ?>>スキップ</option>
-    </select>
-    <select name="job">
-        <option value="">処理すべて</option>
-        <?php foreach ($jobTypes as $j): ?>
-            <option value="<?= h($j['job_type']) ?>"<?= $job === $j['job_type'] ? ' selected' : '' ?>><?= h($j['job_type']) ?></option>
-        <?php endforeach; ?>
-    </select>
-    <input type="text" name="shop" value="<?= h((string)$shop) ?>" placeholder="店舗ID" style="min-width:100px">
-    <button class="btn-primary-app" type="submit">絞り込む</button>
-    <a class="btn-plain" href="logs.php">解除</a>
+<form class="filter-card" method="get" action="logs.php">
+    <div class="filter-row">
+        <div class="filter-field">
+            <label for="days">期間</label>
+            <select id="days" name="days">
+                <?php foreach ([1 => '過去1日', 3 => '過去3日', 7 => '過去7日', 30 => '過去30日'] as $v => $lbl): ?>
+                    <option value="<?= $v ?>"<?= $days === $v ? ' selected' : '' ?>><?= h($lbl) ?></option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+        <div class="filter-field">
+            <label for="result">結果</label>
+            <select id="result" name="result">
+                <option value="">すべて</option>
+                <option value="1"<?= $result === '1' ? ' selected' : '' ?>>成功</option>
+                <option value="0"<?= $result === '0' ? ' selected' : '' ?>>失敗</option>
+                <option value="2"<?= $result === '2' ? ' selected' : '' ?>>スキップ</option>
+            </select>
+        </div>
+        <div class="filter-field">
+            <label for="job">処理種別</label>
+            <select id="job" name="job">
+                <option value="">すべて</option>
+                <?php foreach ($jobTypes as $j): ?>
+                    <option value="<?= h($j['job_type']) ?>"<?= $job === $j['job_type'] ? ' selected' : '' ?>><?= h($j['job_type']) ?></option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+        <div class="filter-field">
+            <label for="shop">店舗ID</label>
+            <input type="text" id="shop" name="shop" value="<?= h((string)$shop) ?>" placeholder="例: 14">
+        </div>
+        <div class="filter-actions">
+            <button class="btn btn-main" type="submit"><i class="fa-solid fa-magnifying-glass"></i>検索</button>
+            <a class="btn btn-outline" href="logs.php"><i class="fa-solid fa-rotate-left"></i>リセット</a>
+        </div>
+    </div>
 </form>
 
-<?php if (!$rows): ?>
-    <div class="notice notice-info">この期間の記録はありません。</div>
-<?php else: ?>
-<table class="grid">
-    <thead>
-    <tr>
-        <th style="width:150px">日時</th>
-        <th style="width:60px">店舗</th>
-        <th>店舗名</th>
-        <th style="width:110px">処理</th>
-        <th style="width:80px">結果</th>
-        <th style="width:80px" class="num">所要</th>
-        <th>内容</th>
-    </tr>
-    </thead>
-    <tbody>
-    <?php foreach ($rows as $r): ?>
+<div class="section-card">
+    <div class="head">
+        <i class="fa-solid fa-list-check"></i>実行ログ
+        <span class="count">全 <?= number_format($total) ?> 件</span>
+    </div>
+    <?php if (!$rows): ?>
+        <div class="empty"><i class="fa-solid fa-inbox"></i>この期間の記録はありません。</div>
+    <?php else: ?>
+    <div class="table-scroll">
+    <table class="data-table">
+        <thead>
         <tr>
-            <td class="muted"><?= h((string)$r['started_at']) ?></td>
-            <td class="id"><?= (int)$r['user_id'] ?></td>
-            <td><a href="shop_edit.php?id=<?= (int)$r['user_id'] ?>"><?= h((string)$r['username']) ?></a></td>
-            <td><?= h((string)$r['job_type']) ?></td>
-            <td>
-                <?php if ((int)$r['result'] === 1): ?><span class="pill pill-on">成功</span>
-                <?php elseif ((int)$r['result'] === 0): ?><span class="pill pill-bad">失敗</span>
-                <?php else: ?><span class="pill pill-off">スキップ</span><?php endif; ?>
-            </td>
-            <td class="num muted"><?= $r['duration_ms'] === null ? '—' : number_format((int)$r['duration_ms']) . 'ms' ?></td>
-            <td class="wrapcell"><?= h(mb_strimwidth((string)$r['message'], 0, 160, '…')) ?></td>
+            <th style="width:150px">日時</th>
+            <th style="width:60px">ID</th>
+            <th>店舗名</th>
+            <th style="width:120px">処理</th>
+            <th style="width:90px">結果</th>
+            <th style="width:90px" class="num">所要</th>
+            <th>内容</th>
         </tr>
-    <?php endforeach; ?>
-    </tbody>
-</table>
-<?php render_pager($page, $total, $perPage); ?>
-<?php endif; ?>
+        </thead>
+        <tbody>
+        <?php foreach ($rows as $r): ?>
+            <tr>
+                <td class="muted"><?= h((string)$r['started_at']) ?></td>
+                <td class="id-col"><?= (int)$r['user_id'] ?></td>
+                <td class="strong"><a href="shop_edit.php?id=<?= (int)$r['user_id'] ?>"><?= h((string)$r['username']) ?></a></td>
+                <td><?= h((string)$r['job_type']) ?></td>
+                <td>
+                    <?php if ((int)$r['result'] === 1): ?><span class="badge badge-active">成功</span>
+                    <?php elseif ((int)$r['result'] === 0): ?><span class="badge badge-danger">失敗</span>
+                    <?php else: ?><span class="badge badge-inactive">スキップ</span><?php endif; ?>
+                </td>
+                <td class="num muted"><?= $r['duration_ms'] === null ? '—' : number_format((int)$r['duration_ms']) . 'ms' ?></td>
+                <td class="wrapcell"><?= h(mb_strimwidth((string)$r['message'], 0, 160, '…')) ?></td>
+            </tr>
+        <?php endforeach; ?>
+        </tbody>
+    </table>
+    </div>
+    <?php render_pager($page, $total, $perPage); ?>
+    <?php endif; ?>
+</div>
 
 <?php render_foot(); ?>

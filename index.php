@@ -8,23 +8,21 @@ $staleHours  = (int)cfg('stale_hours', 6);
 $hasStatus   = table_exists('exec_status');
 $hasLog      = table_exists('exec_log');
 
-// --- 契約状況 -------------------------------------------------------
 $shopTotal  = (int)qv('SELECT COUNT(*) FROM users');
 $shopActive = (int)qv('SELECT COUNT(*) FROM users WHERE status = ?', [$activeValue]);
 $girlTotal  = (int)qv('SELECT COUNT(*) FROM kiten_girl');
-$girlActive = (int)qv('SELECT COUNT(*) FROM kiten_girl WHERE kitengirl_status = 1');
 
-// 契約中の店舗に属する稼働キャストだけを数える（実際に動いている量）
 $girlRunning = (int)qv(
     'SELECT COUNT(*) FROM kiten_girl g
-      JOIN users u ON u.user_id = g.shopr_id
-     WHERE u.status = ? AND g.kitengirl_status = 1',
+       JOIN users u ON u.user_id = g.shopr_id
+      WHERE u.status = ? AND g.kitengirl_status = 1',
     [$activeValue]
 );
 
-// --- 稼働状況 -------------------------------------------------------
 $stale = [];
 $recentFails = [];
+$todayOk = $todayFail = null;
+
 if ($hasStatus) {
     $stale = q(
         'SELECT u.user_id, u.username, s.last_success_at, s.last_exec_at, s.fail_streak, s.last_message
@@ -48,11 +46,8 @@ if ($hasLog) {
     );
     $todayOk   = (int)qv('SELECT COUNT(*) FROM exec_log WHERE result = 1 AND started_at >= CURDATE()');
     $todayFail = (int)qv('SELECT COUNT(*) FROM exec_log WHERE result = 0 AND started_at >= CURDATE()');
-} else {
-    $todayOk = $todayFail = null;
 }
 
-// --- プラン別 -------------------------------------------------------
 $byPlan = q('SELECT ktype, status, COUNT(*) AS n FROM users GROUP BY ktype, status ORDER BY ktype');
 $planRows = [];
 foreach ($byPlan as $r) {
@@ -66,49 +61,62 @@ foreach ($byPlan as $r) {
     }
 }
 
-render_head('概要', 'index');
+render_head('ダッシュボード', 'index');
 ?>
 
-<div class="stats">
-    <div class="stat"><div class="n"><?= number_format($shopActive) ?></div><div class="k">契約中の店舗</div></div>
-    <div class="stat"><div class="n"><?= number_format($shopTotal - $shopActive) ?></div><div class="k">停止中の店舗</div></div>
-    <div class="stat"><div class="n"><?= number_format($girlRunning) ?></div><div class="k">稼働キャスト（契約中の店舗）</div></div>
-    <div class="stat"><div class="n"><?= number_format($girlTotal) ?></div><div class="k">登録キャスト総数</div></div>
-    <?php if ($hasLog): ?>
-        <div class="stat"><div class="n"><?= number_format((int)$todayOk) ?></div><div class="k">本日の成功</div></div>
-        <div class="stat<?= $todayFail > 0 ? ' alert' : '' ?>"><div class="n"><?= number_format((int)$todayFail) ?></div><div class="k">本日の失敗</div></div>
-    <?php endif; ?>
+<div class="summary-row">
+    <?php
+    summary_card('契約中の店舗', number_format($shopActive), 'fa-store');
+    summary_card('停止中の店舗', number_format($shopTotal - $shopActive), 'fa-store-slash');
+    summary_card('稼働キャスト', number_format($girlRunning), 'fa-user-check');
+    summary_card('登録キャスト総数', number_format($girlTotal), 'fa-address-book');
+    if ($hasLog) {
+        summary_card('本日の成功', number_format((int)$todayOk), 'fa-circle-check');
+        summary_card('本日の失敗', number_format((int)$todayFail), 'fa-circle-exclamation', $todayFail > 0 ? 'alert' : '');
+    }
+    ?>
 </div>
 
 <?php if (!$hasStatus || !$hasLog): ?>
-    <div class="notice notice-warn">
-        稼働監視のテーブルがまだありません。sql/schema.sql を実行し、VPSのプログラムから exec_log と exec_status に書き込む処理を追加すると、この画面に稼働状況が出ます。
+    <div class="alert-box alert-warn">
+        <i class="fa-solid fa-triangle-exclamation"></i>
+        <div>稼働監視のテーブルがまだありません。VPSのプログラムから exec_log と exec_status に書き込む処理を追加すると、この画面に稼働状況が出ます。</div>
     </div>
 <?php endif; ?>
 
 <?php if ($hasStatus): ?>
-<div class="panel">
-    <h2><?= (int)$staleHours ?>時間以上、成功していない契約中の店舗</h2>
+<div class="section-card">
+    <div class="head">
+        <i class="fa-solid fa-clock"></i><?= (int)$staleHours ?>時間以上、成功していない契約中の店舗
+        <span class="count">全 <?= number_format(count($stale)) ?> 件</span>
+    </div>
     <?php if (!$stale): ?>
-        <div class="panel-body muted">ありません。契約中の店舗はすべて直近で成功しています。</div>
+        <div class="empty"><i class="fa-solid fa-circle-check"></i>契約中の店舗はすべて直近で成功しています。</div>
     <?php else: ?>
-    <table class="grid">
+    <div class="table-scroll">
+    <table class="data-table">
         <thead>
         <tr>
             <th style="width:70px">ID</th>
-            <th>店舗</th>
+            <th>店舗名</th>
             <th style="width:130px">最終成功</th>
-            <th style="width:130px">最終実行</th>
-            <th style="width:90px" class="num">連続失敗</th>
+            <th style="width:120px">最終実行</th>
+            <th style="width:90px">連続失敗</th>
             <th>直近のエラー</th>
         </tr>
         </thead>
         <tbody>
         <?php foreach ($stale as $r): ?>
             <tr>
-                <td class="id"><?= (int)$r['user_id'] ?></td>
-                <td><a href="shop_edit.php?id=<?= (int)$r['user_id'] ?>"><?= h($r['username']) ?></a></td>
-                <td><?php if ($r['last_success_at']): ?><span class="pill pill-warn"><?= h(ago($r['last_success_at'])) ?></span><?php else: ?><span class="pill pill-bad">記録なし</span><?php endif; ?></td>
+                <td class="id-col"><?= (int)$r['user_id'] ?></td>
+                <td class="strong"><a href="shop_edit.php?id=<?= (int)$r['user_id'] ?>"><?= h($r['username']) ?></a></td>
+                <td>
+                    <?php if ($r['last_success_at']): ?>
+                        <span class="badge badge-warn"><?= h(ago($r['last_success_at'])) ?></span>
+                    <?php else: ?>
+                        <span class="badge badge-danger">記録なし</span>
+                    <?php endif; ?>
+                </td>
                 <td class="muted"><?= h(ago($r['last_exec_at'])) ?></td>
                 <td class="num"><?= (int)$r['fail_streak'] ?></td>
                 <td class="wrapcell muted"><?= h(mb_strimwidth((string)$r['last_message'], 0, 90, '…')) ?></td>
@@ -116,19 +124,21 @@ render_head('概要', 'index');
         <?php endforeach; ?>
         </tbody>
     </table>
+    </div>
     <?php endif; ?>
 </div>
 <?php endif; ?>
 
 <?php if ($hasLog && $recentFails): ?>
-<div class="panel">
-    <h2>直近の失敗</h2>
-    <table class="grid">
+<div class="section-card">
+    <div class="head"><i class="fa-solid fa-circle-exclamation"></i>直近の失敗</div>
+    <div class="table-scroll">
+    <table class="data-table">
         <thead>
         <tr>
             <th style="width:150px">日時</th>
-            <th style="width:70px">ID</th>
-            <th>店舗</th>
+            <th style="width:60px">ID</th>
+            <th>店舗名</th>
             <th style="width:120px">処理</th>
             <th>内容</th>
         </tr>
@@ -137,27 +147,29 @@ render_head('概要', 'index');
         <?php foreach ($recentFails as $r): ?>
             <tr>
                 <td class="muted"><?= h((string)$r['started_at']) ?></td>
-                <td class="id"><?= (int)$r['user_id'] ?></td>
-                <td><a href="shop_edit.php?id=<?= (int)$r['user_id'] ?>"><?= h((string)$r['username']) ?></a></td>
+                <td class="id-col"><?= (int)$r['user_id'] ?></td>
+                <td class="strong"><a href="shop_edit.php?id=<?= (int)$r['user_id'] ?>"><?= h((string)$r['username']) ?></a></td>
                 <td><?= h((string)$r['job_type']) ?></td>
                 <td class="wrapcell"><?= h(mb_strimwidth((string)$r['message'], 0, 120, '…')) ?></td>
             </tr>
         <?php endforeach; ?>
         </tbody>
     </table>
+    </div>
 </div>
 <?php endif; ?>
 
-<div class="panel">
-    <h2>プラン別の内訳</h2>
-    <table class="grid">
+<div class="section-card">
+    <div class="head"><i class="fa-solid fa-layer-group"></i>プラン別の内訳</div>
+    <div class="table-scroll">
+    <table class="data-table">
         <thead>
-        <tr><th>プラン</th><th class="num" style="width:120px">契約中</th><th class="num" style="width:120px">停止</th><th class="num" style="width:120px">合計</th></tr>
+        <tr><th>プラン</th><th class="num" style="width:130px">契約中</th><th class="num" style="width:130px">停止</th><th class="num" style="width:130px">合計</th></tr>
         </thead>
         <tbody>
         <?php foreach ($planRows as $k => $v): ?>
             <tr>
-                <td><?= h(label_of('plan_labels', $k)) ?></td>
+                <td class="strong"><?= h(label_of('plan_labels', $k)) ?></td>
                 <td class="num"><?= number_format($v['active']) ?></td>
                 <td class="num muted"><?= number_format($v['inactive']) ?></td>
                 <td class="num"><?= number_format($v['active'] + $v['inactive']) ?></td>
@@ -165,6 +177,7 @@ render_head('概要', 'index');
         <?php endforeach; ?>
         </tbody>
     </table>
+    </div>
 </div>
 
 <?php render_foot(); ?>

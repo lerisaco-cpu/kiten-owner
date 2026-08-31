@@ -32,42 +32,50 @@ $actionLabels = [
 render_head('操作履歴', 'audit');
 ?>
 
-<?php if (!$rows): ?>
-    <div class="notice notice-info">まだ記録はありません。</div>
-<?php else: ?>
-<table class="grid">
-    <thead>
-    <tr>
-        <th style="width:150px">日時</th>
-        <th style="width:120px">担当</th>
-        <th style="width:150px">操作</th>
-        <th style="width:130px">対象</th>
-        <th>内容</th>
-        <th style="width:120px">IP</th>
-    </tr>
-    </thead>
-    <tbody>
-    <?php foreach ($rows as $r): ?>
+<div class="section-card">
+    <div class="head">
+        <i class="fa-solid fa-clock-rotate-left"></i>操作履歴
+        <span class="count">全 <?= number_format($total) ?> 件</span>
+    </div>
+    <?php if (!$rows): ?>
+        <div class="empty"><i class="fa-solid fa-inbox"></i>まだ記録はありません。</div>
+    <?php else: ?>
+    <div class="table-scroll">
+    <table class="data-table">
+        <thead>
         <tr>
-            <td class="muted"><?= h((string)$r['created_at']) ?></td>
-            <td><?= h((string)$r['admin_name']) ?></td>
-            <td><?= h($actionLabels[$r['action']] ?? $r['action']) ?></td>
-            <td class="id">
-                <?php if ($r['target_type'] === 'user' && $r['target_id']): ?>
-                    <a href="shop_edit.php?id=<?= (int)$r['target_id'] ?>">店舗 <?= (int)$r['target_id'] ?></a>
-                <?php elseif ($r['target_type'] !== ''): ?>
-                    <?= h($r['target_type']) ?> <?= (int)$r['target_id'] ?>
-                <?php else: ?>
-                    <span class="muted">—</span>
-                <?php endif; ?>
-            </td>
-            <td class="wrapcell muted"><?= h(mb_strimwidth((string)$r['detail'], 0, 160, '…')) ?></td>
-            <td class="id"><?= h($r['ip']) ?></td>
+            <th style="width:150px">日時</th>
+            <th style="width:120px">担当</th>
+            <th style="width:160px">操作</th>
+            <th style="width:140px">対象</th>
+            <th>内容</th>
+            <th style="width:120px">IP</th>
         </tr>
-    <?php endforeach; ?>
-    </tbody>
-</table>
-<?php render_pager($page, $total, $perPage); ?>
-<?php endif; ?>
+        </thead>
+        <tbody>
+        <?php foreach ($rows as $r): ?>
+            <tr>
+                <td class="muted"><?= h((string)$r['created_at']) ?></td>
+                <td class="strong"><?= h((string)$r['admin_name']) ?></td>
+                <td><?= h($actionLabels[$r['action']] ?? $r['action']) ?></td>
+                <td class="id-col">
+                    <?php if ($r['target_type'] === 'user' && $r['target_id']): ?>
+                        <a href="shop_edit.php?id=<?= (int)$r['target_id'] ?>">店舗 <?= (int)$r['target_id'] ?></a>
+                    <?php elseif ($r['target_type'] !== ''): ?>
+                        <?= h($r['target_type']) ?> <?= (int)$r['target_id'] ?>
+                    <?php else: ?>
+                        <span class="soft">—</span>
+                    <?php endif; ?>
+                </td>
+                <td class="wrapcell muted"><?= h(mb_strimwidth((string)$r['detail'], 0, 160, '…')) ?></td>
+                <td class="id-col"><?= h($r['ip']) ?></td>
+            </tr>
+        <?php endforeach; ?>
+        </tbody>
+    </table>
+    </div>
+    <?php render_pager($page, $total, $perPage); ?>
+    <?php endif; ?>
+</div>
 
 <?php render_foot(); ?>
