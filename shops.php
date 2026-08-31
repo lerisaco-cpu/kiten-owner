@@ -157,13 +157,14 @@ render_head('店舗管理', 'shops');
         <thead>
         <tr>
             <th style="width:64px"><?= sort_link('id', 'ID') ?></th>
-            <th><?= sort_link('name', '店舗名') ?></th>
-            <th style="width:110px"><?= sort_link('plan', 'プラン') ?></th>
-            <th style="width:120px"><?= sort_link('girls', 'キャスト') ?></th>
-            <th style="width:100px"><?= sort_link('status', '契約') ?></th>
-            <th style="width:110px">担当</th>
-            <th style="width:150px">フォルダ名</th>
-            <th style="width:130px">IP</th>
+            <th style="min-width:150px"><?= sort_link('name', '店舗名') ?></th>
+            <th style="width:200px">ログインID</th>
+            <th style="width:170px">フォルダ名</th>
+            <th style="width:140px">IP</th>
+            <th style="width:100px"><?= sort_link('plan', 'プラン') ?></th>
+            <th style="width:110px"><?= sort_link('girls', 'キャスト') ?></th>
+            <th style="width:90px"><?= sort_link('status', '契約') ?></th>
+            <th style="width:110px">業種</th>
             <th style="width:80px">実行鯖</th>
             <?php if ($hasStatusTable): ?><th style="width:120px"><?= sort_link('last', '稼働状況') ?></th><?php endif; ?>
             <th style="width:100px"></th>
@@ -175,13 +176,18 @@ render_head('店舗管理', 'shops');
             $validSrv = in_array((int)$r['exeserver'], (array)cfg('valid_exeservers', []), true);
             $folder   = (string)($r['folder_name'] ?? '');
             $ipAddr   = (string)($r['ip_address'] ?? '');
+            $loginId  = (string)($r['email'] ?? '');
             ?>
             <tr>
                 <td class="id-col"><?= (int)$r['user_id'] ?></td>
                 <td>
                     <div class="strong"><a href="shop_edit.php?id=<?= (int)$r['user_id'] ?>"><?= h($r['username']) ?></a></div>
-                    <div class="muted" style="font-size:12px"><?= h($r['email']) ?></div>
                 </td>
+                <td class="wrapcell">
+                    <div class="id-col"><?= $loginId !== '' ? h($loginId) : '<span class="soft">—</span>' ?></div>
+                </td>
+                <?= meta_cell($r['user_id'], 'folder_name', $folder, 191, $canEditMeta) ?>
+                <?= meta_cell($r['user_id'], 'ip_address', $ipAddr, 45, $canEditMeta) ?>
                 <td><?= h(label_of('plan_labels', $r['ktype'])) ?></td>
                 <td class="num">
                     <?= number_format((int)$r['girl_active']) ?>
@@ -191,8 +197,6 @@ render_head('店舗管理', 'shops');
                     <span class="badge <?= $isActive ? 'badge-active' : 'badge-inactive' ?>"><?= h(label_of('status_labels', $r['status'])) ?></span>
                 </td>
                 <td><?= h($r['tantou']) ?></td>
-                <?= meta_cell($r['user_id'], 'folder_name', $folder, 191, $canEditMeta) ?>
-                <?= meta_cell($r['user_id'], 'ip_address', $ipAddr, 45, $canEditMeta) ?>
                 <td>
                     <?php if ($validSrv): ?>
                         <?= (int)$r['exeserver'] ?>
