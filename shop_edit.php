@@ -4,7 +4,17 @@ require __DIR__ . '/lib/layout.php';
 require_login();
 
 $id = (int)($_GET['id'] ?? 0);
-$shop = q1('SELECT * FROM users WHERE user_id = ?', [$id]);
+
+// 運営メモ（フォルダ名・IP）は shop_meta 側。まだ行が無い店舗もあるので LEFT JOIN で読み、
+// 無い場合は空文字として扱う。users 側には一切カラムを増やさない。
+$shopSql = 'SELECT u.*,
+                   COALESCE(m.folder_name, \'\') AS folder_name,
+                   COALESCE(m.ip_address,  \'\') AS ip_address
+              FROM users u
+              LEFT JOIN shop_meta m ON m.user_id = u.user_id
+             WHERE u.user_id = ?';
+
+$shop = q1($shopSql, [$id]);
 if ($shop === null) {
     render_head('店舗管理', 'shops');
     flash('この店舗は見つかりませんでした。削除された可能性があります。', 'warn');
@@ -15,6 +25,9 @@ if ($shop === null) {
 
 // 稼働中システムが読んでいるテーブルなので、書き換えを許すカラムは限定する
 $editable = ['status', 'ktype', 'tantou', 'tel', 'bank', 'etc', 'exeserver'];
+
+// shop_meta 側の項目。値は運営が見るためのメモなので、形式チェックはせず桁数だけ守る。
+$metaLimits = ['folder_name' => 191, 'ip_address' => 45];
 
 $message = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -41,11 +54,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
+    // shop_meta 側。片方だけ送られてきても書けるよう、現在値から始める。
+    $metaNew     = ['folder_name' => (string)$shop['folder_name'], 'ip_address' => (string)$shop['ip_address']];
+    $metaChanged = false;
+
+    foreach ($metaLimits as $colName => $maxLen) {
+        if (!array_key_exists($colName, $_POST)) {
+            continue;
+        }
+        $new = mb_substr(trim((string)$_POST[$colName]), 0, $maxLen);
+        if ($new !== $metaNew[$colName]) {
+            $changes[$colName]  = ['from' => $metaNew[$colName], 'to' => $new];
+            $metaNew[$colName]  = $new;
+            $metaChanged        = true;
+        }
+    }
+
     if ($sets) {
         $params[] = $id;
         ex('UPDATE users SET ' . implode(', ', $sets) . ' WHERE user_id = ?', $params);
+    }
+
+    if ($metaChanged) {
+        // まだ行が無い店舗でも1回の実行で済ませる
+        ex(
+            'INSERT INTO shop_meta (user_id, folder_name, ip_address, updated_at)
+                  VALUES (?, ?, ?, NOW())
+             ON DUPLICATE KEY UPDATE folder_name = VALUES(folder_name),
+                                     ip_address  = VALUES(ip_address),
+                                     updated_at  = NOW()',
+            [$id, $metaNew['folder_name'], $metaNew['ip_address']]
+        );
+    }
+
+    if ($changes) {
         audit('update_shop', 'user', $id, $changes);
-        $shop = q1('SELECT * FROM users WHERE user_id = ?', [$id]);
+        $shop = q1($shopSql, [$id]);
         $message = '保存しました。';
     } else {
         $message = '変更はありませんでした。';
@@ -123,6 +167,14 @@ if ($message !== '') {
             <div class="form-row">
                 <label for="etc">備考</label>
                 <div><input type="text" id="etc" name="etc" value="<?= h($shop['etc']) ?>"<?= can_edit() ? '' : ' disabled' ?>></div>
+            </div>
+            <div class="form-row">
+                <label for="folder_name">フォルダ名</label>
+                <div><input type="text" id="folder_name" name="folder_name" maxlength="191" value="<?= h($shop['folder_name']) ?>"<?= can_edit() ? '' : ' disabled' ?>></div>
+            </div>
+            <div class="form-row">
+                <label for="ip_address">IPアドレス</label>
+                <div><input type="text" id="ip_address" name="ip_address" maxlength="45" value="<?= h($shop['ip_address']) ?>"<?= can_edit() ? '' : ' disabled' ?>></div>
             </div>
             <?php if (can_edit()): ?>
                 <div class="form-actions">

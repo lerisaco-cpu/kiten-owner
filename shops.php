@@ -17,13 +17,18 @@ const STATUS_ALL = 'all';
 $statusParam = (string)($_GET['status'] ?? '');
 $status = $statusParam === '' ? (string)$activeValue : $statusParam;
 
+// 運営メモ（フォルダ名・IP）は shop_meta 側。行が無い店舗も一覧から消えないよう
+// LEFT JOIN で読む。絞り込み条件に m.* を使うので、件数用のクエリにも同じ JOIN が要る。
+$joinMeta = 'LEFT JOIN shop_meta m ON m.user_id = u.user_id';
+
 $where  = [];
 $params = [];
 
 if ($kw !== '') {
-    $where[] = '(u.username LIKE ? OR u.email LIKE ? OR u.tantou LIKE ? OR u.tel LIKE ? OR u.user_id = ?)';
+    $where[] = '(u.username LIKE ? OR u.email LIKE ? OR u.tantou LIKE ? OR u.tel LIKE ?'
+             . ' OR m.folder_name LIKE ? OR m.ip_address LIKE ? OR u.user_id = ?)';
     $like = '%' . $kw . '%';
-    array_push($params, $like, $like, $like, $like, (int)$kw);
+    array_push($params, $like, $like, $like, $like, $like, $like, (int)$kw);
 }
 if ($status !== STATUS_ALL) {
     $where[] = 'u.status = ?';
@@ -35,7 +40,7 @@ if ($plan !== '') {
 }
 $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
 
-$total = (int)qv("SELECT COUNT(*) FROM users u $whereSql", $params);
+$total = (int)qv("SELECT COUNT(*) FROM users u $joinMeta $whereSql", $params);
 
 $sortMap = [
     'id'     => 'u.user_id',
@@ -59,6 +64,7 @@ if (!$hasStatusTable && $sort === 'last') {
 $rows = q(
     "SELECT u.user_id, u.username, u.email, u.status, u.ktype, u.tantou, u.tel, u.exeserver,
             $selStatus
+            m.folder_name, m.ip_address,
             COALESCE(g.total, 0)  AS girl_total,
             COALESCE(g.active, 0) AS girl_active
        FROM users u
@@ -67,6 +73,7 @@ $rows = q(
               FROM kiten_girl GROUP BY shopr_id
        ) g ON g.shopr_id = u.user_id
        $joinStatus
+       $joinMeta
        $whereSql
       ORDER BY $col $dir
       LIMIT $perPage OFFSET " . (($page - 1) * $perPage),
@@ -133,6 +140,8 @@ render_head('店舗管理', 'shops');
             <th style="width:120px"><?= sort_link('girls', 'キャスト') ?></th>
             <th style="width:100px"><?= sort_link('status', '契約') ?></th>
             <th style="width:110px">担当</th>
+            <th style="width:150px">フォルダ名</th>
+            <th style="width:130px">IP</th>
             <th style="width:80px">実行鯖</th>
             <?php if ($hasStatusTable): ?><th style="width:120px"><?= sort_link('last', '稼働状況') ?></th><?php endif; ?>
             <th style="width:100px"></th>
@@ -142,6 +151,8 @@ render_head('店舗管理', 'shops');
         <?php foreach ($rows as $r):
             $isActive = (int)$r['status'] === $activeValue;
             $validSrv = in_array((int)$r['exeserver'], (array)cfg('valid_exeservers', []), true);
+            $folder   = (string)($r['folder_name'] ?? '');
+            $ipAddr   = (string)($r['ip_address'] ?? '');
             ?>
             <tr>
                 <td class="id-col"><?= (int)$r['user_id'] ?></td>
@@ -158,6 +169,8 @@ render_head('店舗管理', 'shops');
                     <span class="badge <?= $isActive ? 'badge-active' : 'badge-inactive' ?>"><?= h(label_of('status_labels', $r['status'])) ?></span>
                 </td>
                 <td><?= h($r['tantou']) ?></td>
+                <td class="wrapcell"><?= $folder !== '' ? h($folder) : '<span class="soft">—</span>' ?></td>
+                <td class="wrapcell"><?= $ipAddr !== '' ? h($ipAddr) : '<span class="soft">—</span>' ?></td>
                 <td>
                     <?php if ($validSrv): ?>
                         <?= (int)$r['exeserver'] ?>
