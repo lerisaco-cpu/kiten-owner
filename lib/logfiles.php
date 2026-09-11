@@ -4,7 +4,8 @@ declare(strict_types=1);
 /**
  * iMacros が店舗フォルダに吐き出すログファイルの読み取り。
  *
- * 置き場所は  {log_root}/{folder_name}/  で、営業日ごとに5種類のファイルが出ます。
+ * 置き場所は  {log_root}/{folder_name}/{log_subdir}/  で、営業日ごとに5種類のファイルが出ます。
+ * サブディレクトリ名は設定で変えられ、空文字にすると店舗フォルダの直下を見ます。
  * データベースは一切見ません。ファイルだけで完結します。
  *
  * ファイルの共通仕様（実データで確認済み）
@@ -40,6 +41,15 @@ function log_root(): string
     return rtrim((string)cfg('log_root', '/home/lerisa/public_html/kiten'), '/');
 }
 
+/**
+ * 店舗フォルダのどのサブディレクトリにログが入っているか。
+ * 空文字にすると店舗フォルダの直下を見ます。
+ */
+function log_subdir(): string
+{
+    return trim((string)cfg('log_subdir', 'log'), '/');
+}
+
 /** 「残数があるのに走査数がこれ未満」なら、リストが読めていないと見なす */
 function log_scan_min(): int
 {
@@ -71,10 +81,35 @@ function log_date_valid(string $date): bool
 }
 
 /**
- * 店舗フォルダの実パス。読めない場合や、ルートの外を指した場合は null。
+ * 店舗フォルダ自体の実パス（{log_root}/{folder}）。ログの置き場所ではありません。
+ * フォルダ名の打ち間違いと、log サブディレクトリ未作成とを画面で区別するために使います。
+ */
+function log_shop_dir(string $folder): ?string
+{
+    if (!log_folder_valid($folder)) {
+        return null;
+    }
+    $root = realpath(log_root());
+    if ($root === false) {
+        return null;
+    }
+    $dir = realpath($root . DIRECTORY_SEPARATOR . $folder);
+    if ($dir === false || !is_dir($dir)) {
+        return null;
+    }
+    if ($dir !== $root && strpos($dir, $root . DIRECTORY_SEPARATOR) !== 0) {
+        return null;
+    }
+    return $dir;
+}
+
+/**
+ * ログが入っているディレクトリの実パス（{log_root}/{folder}/{log_subdir}）。
+ * 読めない場合や、ルートの外を指した場合は null。
  *
  * 文字種のチェックを通っていても、シンボリックリンクで外に出られる可能性があるので
- * realpath() でルート配下に収まっていることを必ず確かめます。
+ * realpath() で「ログのルート配下」に収まっていることを必ず確かめます。
+ * 確認の基準はあくまで log_root であって、店舗フォルダやサブディレクトリではありません。
  */
 function log_dir(string $folder): ?string
 {
@@ -85,7 +120,14 @@ function log_dir(string $folder): ?string
     if ($root === false) {
         return null;
     }
-    $dir = realpath($root . DIRECTORY_SEPARATOR . $folder);
+
+    $path = $root . DIRECTORY_SEPARATOR . $folder;
+    $sub  = log_subdir();
+    if ($sub !== '') {
+        $path .= DIRECTORY_SEPARATOR . $sub;
+    }
+
+    $dir = realpath($path);
     if ($dir === false || !is_dir($dir)) {
         return null;
     }
@@ -393,7 +435,14 @@ function log_day_summary(string $folder, string $date): array
         'files'     => [],
     ];
 
-    if ($folder === '' || log_dir($folder) === null) {
+    // フォルダ名そのものが未設定、または受け付けられない文字を含む
+    if ($folder === '' || !log_folder_valid($folder)) {
+        return $out;
+    }
+    // 名前は妥当だが、ログのディレクトリがまだ無い（log サブディレクトリ未作成など）。
+    // 設定漏れではないので「ファイルなし」として扱う。
+    if (log_dir($folder) === null) {
+        $out['verdict'] = 'nofile';
         return $out;
     }
 

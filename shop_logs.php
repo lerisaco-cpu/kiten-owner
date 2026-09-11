@@ -26,11 +26,16 @@ if ($shop === null) {
 
 $folder = (string)$shop['folder_name'];
 
-// フォルダ名が未設定、または受け付けられない文字を含む場合はここで止める。
+// 止めるのはフォルダ名そのものが使えないときだけ。
+// 名前は正しいのにログのディレクトリがまだ無い場合は、画面は出して「ファイルなし」と示す。
 // 画面にはシステム上のパスを一切出さない。
-$folderOk = $folder !== '' && log_dir($folder) !== null;
+$folderOk = $folder !== '' && log_folder_valid($folder);
 
 $dates = $folderOk ? log_available_dates($folder) : [];
+
+// ログが読めない理由を画面で言い分けるための材料。パスそのものは使いません。
+$shopDirExists = $folderOk && log_shop_dir($folder) !== null;
+$logDirExists  = $folderOk && log_dir($folder) !== null;
 
 // 日付。指定が無ければ最新の営業日。その日が無ければフォルダにある一番新しい日。
 $date = (string)($_GET['date'] ?? '');
@@ -50,10 +55,7 @@ if (!isset($tabs[$tab])) {
 $perPage = log_per_page();
 $page    = max(1, (int)($_GET['page'] ?? 1));
 
-$sum = $folderOk
-    ? log_day_summary($folder, $date)
-    : ['verdict' => 'nofolder', 'start' => 0, 'report' => 0, 'loginerr' => 0, 'taps' => 0,
-       'okini' => 0, 'bad' => [], 'bad_count' => 0, 'last_at' => '', 'mismatch' => false, 'files' => []];
+$sum = log_day_summary($folder, $date);
 
 /**
  * 選択中のタブのファイルを1回だけ流し、表示するページ分の行だけを取り出します。
@@ -161,7 +163,18 @@ crumbs([
 <?php if ($sum['verdict'] === 'nofile'): ?>
     <div class="alert-box alert-info">
         <i class="fa-solid fa-circle-info"></i>
-        <div><?= h(log_date_label($date)) ?> のログはこのフォルダにありません。上の日付から別の営業日を選んでください。</div>
+        <div>
+            <?php if (!$shopDirExists): ?>
+                フォルダ「<?= h($folder) ?>」が見つかりません。店舗詳細でフォルダ名を確認してください。
+            <?php elseif (!$logDirExists): ?>
+                フォルダ「<?= h($folder) ?>」にログの入るサブディレクトリがまだありません。
+                ログの出力が始まると、ここに営業日ごとの記録が並びます。
+            <?php elseif (!$dates): ?>
+                このフォルダにはまだログがありません。ログの出力が始まると、ここに営業日ごとの記録が並びます。
+            <?php else: ?>
+                <?= h(log_date_label($date)) ?> のログはこのフォルダにありません。上の日付から別の営業日を選んでください。
+            <?php endif; ?>
+        </div>
     </div>
 <?php endif; ?>
 
