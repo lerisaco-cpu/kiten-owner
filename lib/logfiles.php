@@ -500,6 +500,55 @@ function log_verdict_badge(string $verdict): string
     return '<span class="badge ' . $cls . '">' . h($label) . '</span>';
 }
 
+/**
+ * 一覧用に、システム異常の中身を短いバッジで表します。
+ * 判定そのものは log_day_summary() と log_has_system_issue() に任せているので、
+ * 画面ごとに条件を書き直すことはありません。
+ */
+function log_issue_badges(array $sum): string
+{
+    if ($sum['verdict'] === 'nofolder') {
+        return '<span class="badge badge-inactive">未設定</span>';
+    }
+    if ($sum['verdict'] === 'nofile') {
+        return '<span class="badge badge-inactive">ファイルなし</span>';
+    }
+    if (!log_has_system_issue($sum)) {
+        return '<span class="badge badge-active">正常</span>';
+    }
+
+    $out = [];
+    if ($sum['verdict'] === 'timeout') {
+        $out[] = '<span class="badge badge-danger" title="FINISH が記録されていません。完走できていません。">時間切れ</span>';
+    }
+    if ($sum['bad_count'] > 0) {
+        $out[] = '<span class="badge badge-danger" title="残数があるのに走査数が足りないキャスト。リストが読めていません。">'
+               . '異常キャスト ' . (int)$sum['bad_count'] . '</span>';
+    }
+    if ($sum['mismatch']) {
+        $out[] = '<span class="badge badge-danger" title="START件数と report行数 + ログイン失敗行数が合いません。">取りこぼし</span>';
+    }
+    return implode(' ', $out);
+}
+
+/** ログイン失敗の件数。店舗側のアカウント問題なので、システム異常とは色を分けます。 */
+function log_login_badge(array $sum): string
+{
+    if ($sum['verdict'] === 'nofolder' || $sum['verdict'] === 'nofile') {
+        return '<span class="soft">—</span>';
+    }
+    if ($sum['loginerr'] === 0) {
+        return '<span class="soft">0</span>';
+    }
+    return '<span class="badge badge-warn">' . (int)$sum['loginerr'] . ' 件</span>';
+}
+
+/** システム異常とログイン失敗のどちらかがあるか（一覧の「異常のみ表示」用） */
+function log_has_any_issue(array $sum): bool
+{
+    return log_has_system_issue($sum) || $sum['loginerr'] > 0;
+}
+
 /** status の状態ごとのバッジ */
 function log_state_badge(string $state): string
 {
