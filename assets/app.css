@@ -443,3 +443,70 @@ a:hover { text-decoration: underline; }
 
 /* 店舗一覧は列が多いので、詰めるより横スクロールさせる（.table-scroll の中） */
 #shop-table { min-width: 1500px; }
+
+/* ================= 稼働ログ ================= */
+.check-inline { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--text); white-space: nowrap; }
+.check-inline input { width: auto; margin: 0; }
+
+.date-nav {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+}
+.date-nav-current { font-size: 13px; color: var(--text-mid); }
+.date-nav-form { display: flex; align-items: center; gap: 8px; margin: 0; }
+.date-nav-form select {
+    padding: 6px 10px;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 13px;
+    background: #fff;
+    color: var(--text);
+}
+
+/* ログ種別のタブ */
+.log-tabs {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+    padding: 10px 14px 0;
+    border-bottom: 1px solid var(--line);
+}
+.log-tabs .count { margin-left: auto; padding-bottom: 10px; font-size: 13px; color: var(--text-mid); }
+.log-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 9px 14px;
+    border: 1px solid transparent;
+    border-bottom: 0;
+    border-radius: 4px 4px 0 0;
+    font-size: 13px;
+    color: var(--text-mid);
+    margin-bottom: -1px;
+}
+.log-tab:hover { background: #f1f5f9; text-decoration: none; }
+.log-tab.on {
+    background: var(--panel);
+    border-color: var(--line);
+    color: var(--main-color);
+    font-weight: 500;
+}
+.log-tab.is-missing { color: var(--text-soft); }
+.log-tab .soft { font-size: 11px; }
+
+/* 異常のある行・数値 */
+.data-table tbody tr.row-alert { background: #fdf2f3; }
+.data-table tbody tr.row-alert:hover { background: #fbe9eb; }
+.data-table tbody tr.row-on { background: #eef5fc; }
+.num-bad  { color: var(--bad); font-weight: 700; }
+.num-warn { color: var(--warn); font-weight: 700; }
+
+.issue-list { margin: 6px 0 0; padding-left: 18px; }
+.issue-list li { margin-bottom: 3px; }
+
+.page-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 20px; }

@@ -1,6 +1,7 @@
 <?php
 require __DIR__ . '/lib/bootstrap.php';
 require __DIR__ . '/lib/layout.php';
+require __DIR__ . '/lib/logfiles.php';
 require_login();
 
 $id = (int)($_GET['id'] ?? 0);
@@ -121,6 +122,21 @@ if ($message !== '') {
         summary_card('連続失敗', (string)(int)$status['fail_streak'], 'fa-circle-exclamation', (int)$status['fail_streak'] > 0 ? 'alert' : '');
     }
     ?>
+</div>
+
+<div class="page-actions">
+    <?php $logFolder = (string)$shop['folder_name']; ?>
+    <?php if ($logFolder !== '' && log_folder_valid($logFolder)): ?>
+        <a class="btn btn-main" href="shop_logs.php?id=<?= $id ?>"><i class="fa-solid fa-list-check"></i>ログを見る</a>
+    <?php else: ?>
+        <button class="btn btn-outline" type="button" disabled
+                title="<?= $logFolder === '' ? 'フォルダ名が未設定です' : 'フォルダ名に使えない文字が含まれています' ?>">
+            <i class="fa-solid fa-list-check"></i>ログを見る
+        </button>
+        <span class="muted" style="font-size:13px">
+            <?= $logFolder === '' ? 'フォルダ名を登録するとログを開けます。' : 'フォルダ名に使えるのは半角の英数字・ハイフン・アンダースコアだけです。' ?>
+        </span>
+    <?php endif; ?>
 </div>
 
 <div class="section-card form-card">
