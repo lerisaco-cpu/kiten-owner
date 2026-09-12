@@ -84,6 +84,43 @@ if ($tabPath !== null) {
     $tabTotal = $got['total'];
 }
 
+/*
+ * ログイン失敗の行から、キャストの memo を更新する SQL を組み立てます。
+ * ここで作るのは phpMyAdmin に貼り付けるためのテキストだけで、この画面からは実行しません。
+ *
+ * 安全のため、次の3点を守っています。
+ *   - ID は数字だけの行しか出さない
+ *   - memo に入れる文字列はログの値をそのまま使わず、下の対応表の2種類に限る
+ *   - 3列目の平文パスワードは SQL に含めない（使うのは種別と ID だけ）
+ *
+ * 行数はごく少ないので、表のページングとは別にファイル全体を読み直します。
+ * 2ページ目を開いていても、SQL は常に全行ぶんが揃います。
+ */
+$sqlMemo = [
+    'ログインエラー'   => 'ログインエラー',
+    '二段階認証エラー' => '二段階認証エラー',
+];
+$sqlLines   = [];
+$sqlSkipped = [];
+
+if ($tab === 'loginerr' && $tabPath !== null) {
+    foreach (log_rows($tabPath) as $f) {
+        $r = log_row_loginerr($f);
+        if (!isset($sqlMemo[$r['kind']])) {
+            $sqlSkipped[] = ['row' => $r, 'why' => '種別が「ログインエラー」「二段階認証エラー」のどちらでもありません'];
+            continue;
+        }
+        if (preg_match('/\A[0-9]+\z/', $r['id']) !== 1) {
+            $sqlSkipped[] = ['row' => $r, 'why' => 'ID が数字だけではありません'];
+            continue;
+        }
+        // memo は上の対応表から、ID は数字だけと確かめた値から組み立てる
+        $sqlLines[] = "UPDATE kiten_girl SET memo = '" . $sqlMemo[$r['kind']]
+                    . "', kitengirl_status ='1' WHERE himedeco_id = " . $r['id'] . ';';
+    }
+}
+$sqlText = implode("\n", $sqlLines);
+
 // 直近7営業日の推移。フォルダに実在する日付のうち、選択中の日以前を新しい順に7件。
 $trend = [];
 foreach ($dates as $d) {
@@ -367,6 +404,79 @@ crumbs([
         <?php endif; ?>
     </div>
     <?php render_pager($page, $tabTotal, $perPage); ?>
+
+    <?php if ($tab === 'loginerr' && ($sqlLines || $sqlSkipped)): ?>
+    <div class="sql-box">
+        <div class="sql-head">
+            <i class="fa-solid fa-database"></i>キャストの memo を更新する SQL
+            <span class="count">全 <?= number_format(count($sqlLines)) ?> 件</span>
+        </div>
+
+        <?php if ($sqlSkipped): ?>
+            <div class="alert-box alert-warn">
+                <i class="fa-solid fa-triangle-exclamation"></i>
+                <div>
+                    次の <?= number_format(count($sqlSkipped)) ?> 行は SQL を作っていません。ログの内容を確かめて、手で対応してください。
+                    <ul class="issue-list">
+                        <?php foreach ($sqlSkipped as $skip): ?>
+                            <li>
+                                <?= h($skip['why']) ?> ―
+                                種別「<?= h($skip['row']['kind']) ?>」 /
+                                ID「<?= h($skip['row']['id']) ?>」 /
+                                キャスト「<?= h($skip['row']['name']) ?>」
+                            </li>
+                        <?php endforeach; ?>
+                    </ul>
+                </div>
+            </div>
+        <?php endif; ?>
+
+        <?php if ($sqlLines): ?>
+            <textarea id="sql-text" class="sql-text" rows="<?= max(3, min(12, count($sqlLines))) ?>"
+                      readonly wrap="off" spellcheck="false"><?= h($sqlText) ?></textarea>
+            <div class="sql-actions">
+                <button class="btn btn-outline btn-sm" type="button" id="sql-copy">
+                    <i class="fa-solid fa-copy"></i>コピー
+                </button>
+                <span class="muted" id="sql-copied"></span>
+                <span class="sql-note">
+                    この画面では実行しません。phpMyAdmin に貼り付け、内容を確かめてから流してください。
+                </span>
+            </div>
+            <script>
+            (function () {
+                var btn = document.getElementById('sql-copy');
+                var ta  = document.getElementById('sql-text');
+                var msg = document.getElementById('sql-copied');
+                if (!btn || !ta) { return; }
+
+                function tell(ok) {
+                    msg.textContent = ok ? 'コピーしました' : 'コピーできませんでした。枠の中を選んでコピーしてください。';
+                    setTimeout(function () { msg.textContent = ''; }, 4000);
+                }
+
+                btn.addEventListener('click', function () {
+                    // まず全文を選択しておく。コピーに失敗しても手で Ctrl+C できる。
+                    ta.focus();
+                    ta.select();
+                    ta.setSelectionRange(0, ta.value.length);
+
+                    // clipboard API は https でないと使えないので、従来の方法も残す
+                    if (navigator.clipboard && window.isSecureContext) {
+                        navigator.clipboard.writeText(ta.value).then(
+                            function () { tell(true); },
+                            function () { try { tell(document.execCommand('copy')); } catch (e) { tell(false); } }
+                        );
+                        return;
+                    }
+                    try { tell(document.execCommand('copy')); } catch (e) { tell(false); }
+                });
+            })();
+            </script>
+        <?php endif; ?>
+    </div>
+    <?php endif; ?>
+
     <?php endif; ?>
 </div>
 
