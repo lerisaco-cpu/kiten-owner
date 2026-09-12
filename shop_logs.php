@@ -17,9 +17,9 @@ $shop = q1(
 );
 
 if ($shop === null) {
-    render_head('稼働ログ', 'logs');
+    render_head('稼働ログ', 'shops');
     flash('この店舗は見つかりませんでした。', 'warn');
-    echo '<a class="btn btn-outline" href="logs.php"><i class="fa-solid fa-arrow-left"></i>稼働ログへ戻る</a>';
+    echo '<a class="btn btn-outline" href="shops.php"><i class="fa-solid fa-arrow-left"></i>店舗管理へ戻る</a>';
     render_foot();
     exit;
 }
@@ -135,9 +135,9 @@ foreach ($dates as $d) {
 
 $badNames = array_map(static fn(array $r): string => $r['name'], $sum['bad']);
 
-render_head($shop['username'] . ' の稼働ログ', 'logs');
+render_head($shop['username'] . ' の稼働ログ', 'shops');
 crumbs([
-    '稼働ログ' => 'logs.php',
+    '店舗管理' => 'shops.php',
     $shop['username'] . '（ID ' . (int)$shop['user_id'] . '）' => null,
 ]);
 ?>
@@ -522,7 +522,7 @@ crumbs([
 <?php endif; ?>
 
 <div class="form-actions">
-    <a class="btn btn-outline" href="logs.php?date=<?= h($date) ?>"><i class="fa-solid fa-arrow-left"></i>稼働ログ一覧へ</a>
+    <a class="btn btn-outline" href="shops.php?date=<?= h($date) ?>"><i class="fa-solid fa-arrow-left"></i>店舗管理へ戻る</a>
     <a class="btn btn-link" href="shop_edit.php?id=<?= (int)$shop['user_id'] ?>"><i class="fa-solid fa-pen-to-square"></i>店舗詳細</a>
 </div>
 

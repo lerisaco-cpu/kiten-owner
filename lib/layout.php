@@ -11,7 +11,6 @@ function render_head(string $pageName, string $active = ''): void
         'index'  => ['index.php',  'ダッシュボード', 'fa-gauge-high'],
         'shops'  => ['shops.php',  '店舗管理',       'fa-users'],
         'girls'  => ['girls.php',  'キャスト管理',   'fa-address-book'],
-        'logs'   => ['logs.php',   '稼働ログ',       'fa-list-check'],
         'health' => ['health.php', 'データ点検',     'fa-triangle-exclamation'],
         'audit'  => ['audit.php',  '操作履歴',       'fa-clock-rotate-left'],
     ];
