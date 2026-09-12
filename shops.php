@@ -13,12 +13,42 @@ require_login();
 $perPage      = (int)cfg('per_page', 50);
 $canEditMeta  = can_edit();   // 一覧のインライン編集を出すかどうか
 
-$p      = shops_params($_GET);
+/*
+ * 画面を開いたときの初期値。
+ *   契約状況 … 契約中（shops_params() が既にそうしている）
+ *   媒体     … ヘブン
+ *   システム異常 … 異常あり（いずれか）
+ *
+ * あくまで初期値なので、URL に指定があればそちらが優先されます。
+ * 「未指定」と「すべてを明示的に選んだ」を取り違えないよう、指定の有無は
+ * array_key_exists() で見ます。値が空かどうかでは判断しません。
+ *
+ * 「すべて」は内部では空文字ですが、空文字のままだと url_with() で落ちてしまい、
+ * 並び替えや日付の切り替えで初期値に戻ってしまいます。そのため URL 上は 'all'
+ * という値でやり取りし、ここで空文字に戻します（契約状況の STATUS_ALL と同じ考え方）。
+ */
+const LIST_ALL = 'all';
+$listDefaults = ['media' => 'heaven', 'issue' => 'any'];
+
+$get = $_GET;
+foreach ($listDefaults as $key => $fallback) {
+    if (!array_key_exists($key, $get)) {
+        $get[$key] = $fallback;          // 未指定 → 初期値
+    } elseif ((string)$get[$key] === LIST_ALL) {
+        $get[$key] = '';                 // 明示的な「すべて」 → 絞り込みなし
+    }
+}
+
+$p      = shops_params($get);
 $date   = $p['date'];
 $kw     = $p['kw'];
 $status = $p['status'];
 $media  = $p['media'];
 $issue  = $p['issue'];
+
+// URL やフォームに載せるときの値。「すべて」だけ 'all' に置き換える。
+$mediaParam = $media === '' ? LIST_ALL : $media;
+$issueParam = $issue === '' ? LIST_ALL : $issue;
 
 $issueOptions = shops_issue_options();
 $mediaOptions = shops_media_options();
@@ -83,7 +113,7 @@ render_head('店舗管理', 'shops');
             <label for="media">媒体</label>
             <select id="media" name="media">
                 <?php foreach ($mediaOptions as $v => $lbl): ?>
-                    <option value="<?= h((string)$v) ?>"<?= $media === (string)$v ? ' selected' : '' ?>><?= h($lbl) ?></option>
+                    <option value="<?= h((string)$v === '' ? LIST_ALL : (string)$v) ?>"<?= $media === (string)$v ? ' selected' : '' ?>><?= h($lbl) ?></option>
                 <?php endforeach; ?>
             </select>
         </div>
@@ -91,7 +121,7 @@ render_head('店舗管理', 'shops');
             <label for="issue">システム異常</label>
             <select id="issue" name="issue">
                 <?php foreach ($issueOptions as $v => $lbl): ?>
-                    <option value="<?= h((string)$v) ?>"<?= $issue === (string)$v ? ' selected' : '' ?>><?= h($lbl) ?></option>
+                    <option value="<?= h((string)$v === '' ? LIST_ALL : (string)$v) ?>"<?= $issue === (string)$v ? ' selected' : '' ?>><?= h($lbl) ?></option>
                 <?php endforeach; ?>
             </select>
         </div>
@@ -110,8 +140,9 @@ render_head('店舗管理', 'shops');
         <?php /* 日付だけを変えて、検索条件は保つ */ ?>
         <?php if ($kw !== ''): ?><input type="hidden" name="kw" value="<?= h($kw) ?>"><?php endif; ?>
         <input type="hidden" name="status" value="<?= h($status) ?>">
-        <?php if ($media !== ''): ?><input type="hidden" name="media" value="<?= h($media) ?>"><?php endif; ?>
-        <?php if ($issue !== ''): ?><input type="hidden" name="issue" value="<?= h($issue) ?>"><?php endif; ?>
+        <?php /* 「すべて」も含めて必ず持たせる。落とすと初期値に戻ってしまう。 */ ?>
+        <input type="hidden" name="media" value="<?= h($mediaParam) ?>">
+        <input type="hidden" name="issue" value="<?= h($issueParam) ?>">
         <select name="date" onchange="this.form.submit()">
             <?php foreach ($dateOptions as $d): ?>
                 <option value="<?= h($d) ?>"<?= $d === $date ? ' selected' : '' ?>><?= h(log_date_label($d)) ?></option>
