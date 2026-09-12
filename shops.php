@@ -358,7 +358,8 @@ render_head('店舗管理', 'shops');
                         <a class="plain" href="<?= h($logUrl) ?>"><?= log_issue_badges($sum) ?></a>
                     <?php endif; ?>
                 </td>
-                <td class="num">
+                <td class="num login-cell">
+                    <span class="login-slot">
                     <?php if ($r['stop_sql'] !== ''):
                         $stopCount = substr_count($r['stop_sql'], "\n") + 1;
                         // ID が数字でない行は飛ばすので、ログの件数と文の数がずれることがある。
@@ -375,6 +376,7 @@ render_head('店舗管理', 'shops');
                     <?php else: ?>
                         <?= log_login_badge($sum) ?>
                     <?php endif; ?>
+                    </span>
                 </td>
                 <td class="act">
                     <?php if ($sum['verdict'] !== 'nofolder'): ?>
@@ -391,6 +393,9 @@ render_head('店舗管理', 'shops');
     <?php endif; ?>
 </div>
 
+<?php /* 画面の隅に出す通知。position:fixed なので表のレイアウトには影響しない。 */ ?>
+<div class="toast-area" id="toast-area"></div>
+
 <script>
 (function () {
     // ログイン失敗のバッジを押すと、そのキャストを停止する SQL をコピーする。
@@ -398,15 +403,32 @@ render_head('店舗管理', 'shops');
     var table = document.getElementById('shop-table');
     if (!table) { return; }
 
-    function flash(btn, text) {
-        if (btn.dataset.label === undefined) { btn.dataset.label = btn.textContent; }
-        btn.textContent = text;
+    var area = document.getElementById('toast-area');
+
+    /**
+     * 成功したことを、バッジの色と画面隅の通知で伝える。
+     * 文字を書き換えると幅が変わって列がずれるので、中身には触らない。
+     */
+    function flash(btn) {
         btn.classList.add('is-copied');
         clearTimeout(btn.dataset.timer);
         btn.dataset.timer = setTimeout(function () {
-            btn.textContent = btn.dataset.label;
             btn.classList.remove('is-copied');
-        }, 2000);
+        }, 2500);
+    }
+
+    function toast(msg) {
+        if (!area) { return; }
+        var box = document.createElement('div');
+        box.className = 'alert-box alert-ok';
+        box.textContent = msg;
+        area.appendChild(box);
+        setTimeout(function () { box.remove(); }, 3500);
+    }
+
+    function done(btn, sql) {
+        flash(btn);
+        toast('SQL ' + sql.split('\n').length + ' 文をコピーしました');
     }
 
     /** Clipboard API が使えない環境向け。手で選んでコピーしてもらう。 */
@@ -450,7 +472,7 @@ render_head('店舗管理', 'shops');
 
         if (navigator.clipboard && window.isSecureContext) {
             navigator.clipboard.writeText(sql).then(
-                function () { flash(btn, 'コピーしました'); },
+                function () { done(btn, sql); },
                 function () { manual(sql); }
             );
             return;
@@ -467,19 +489,18 @@ render_head('店舗管理', 'shops');
         var ok = false;
         try { ok = document.execCommand('copy'); } catch (err) { ok = false; }
         tmp.remove();
-        if (ok) { flash(btn, 'コピーしました'); } else { manual(sql); }
+        if (ok) { done(btn, sql); } else { manual(sql); }
     });
 })();
 </script>
 
 <?php if ($canEditMeta): ?>
-<div class="toast-area" id="toast-area"></div>
 <script>
 (function () {
     var table = document.getElementById('shop-table');
     if (!table) { return; }
     var csrf = table.getAttribute('data-csrf');
-    var area = document.getElementById('toast-area');
+    var area = document.getElementById('toast-area');   // 上のブロックと同じ場所を使う
 
     /** 右下に数秒だけ出す通知。保存の失敗理由をここに出す。 */
     function toast(msg, type) {

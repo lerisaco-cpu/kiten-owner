@@ -565,9 +565,29 @@ a.plain, a.plain:hover { color: inherit; text-decoration: none; }
 }
 .sql-copy-badge:hover { filter: brightness(1.12); }
 .sql-copy-badge:focus-visible { outline: 2px solid var(--main-color); outline-offset: 2px; }
-.sql-copy-badge.is-copied { background: var(--ok); }
+/* 成功したことは色だけで伝える。文字を書き換えると幅が変わって列がずれる。 */
+.sql-copy-badge.is-copied { background: var(--ok); box-shadow: 0 0 0 3px rgba(25, 135, 84, .22); }
 /* ログの件数より生成できた文が少ないときの目印 */
 .badge-partial { margin-left: 2px; font-weight: 700; }
+
+/*
+ * ログイン失敗の列。件数が1桁でも3桁でも、また押した前後でも幅が動かないよう、
+ * 中身を固定幅の枠に入れる。
+ */
+.data-table td.login-cell { width: 110px; }
+.login-slot {
+    display: inline-flex;
+    justify-content: flex-end;
+    align-items: center;
+    width: 76px;
+    max-width: 76px;
+    overflow: hidden;
+}
+.login-slot .badge, .login-slot .sql-copy-badge {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
 
 /* Clipboard API が使えないときに出す、手動コピー用の枠 */
 .sql-fallback {
