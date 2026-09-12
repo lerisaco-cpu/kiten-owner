@@ -20,8 +20,56 @@ if (!log_date_valid($date)) {
     $date = log_date_shift(log_business_date(), -1);
 }
 
-// システム異常かログイン失敗のある店舗だけに絞る
-$onlyBad = ($_GET['bad'] ?? '') === '1';
+/*
+ * システム異常の種類で絞る。
+ * 判定そのものは lib/logfiles.php の log_day_summary() が出した値と、
+ * log_has_system_issue() / log_has_any_issue() をそのまま使う。
+ * しきい値（log_scan_min）や条件をこの画面で書き直すことはしない。
+ *
+ * 'any' は以前の「異常のみ表示」チェックと同じ意味で、チェックはこれに統合した。
+ */
+$issueOptions = [
+    ''         => 'すべて',
+    'any'      => '異常あり（いずれか）',
+    'timeout'  => '時間切れ',
+    'badcast'  => '異常キャスト',
+    'mismatch' => '件数の不一致',
+    'loginerr' => 'ログイン失敗あり',
+    'none'     => '異常なし',
+];
+$issue = (string)($_GET['issue'] ?? '');
+if (!isset($issueOptions[$issue])) {
+    $issue = '';
+}
+
+/** 選んだ種類に当てはまるか。条件は log_day_summary() の結果だけで判定する。 */
+function issue_matches(string $issue, array $sum): bool
+{
+    switch ($issue) {
+        case 'any':      return log_has_any_issue($sum);
+        case 'timeout':  return $sum['verdict'] === 'timeout';
+        case 'badcast':  return $sum['bad_count'] > 0;
+        case 'mismatch': return $sum['mismatch'];
+        case 'loginerr': return $sum['loginerr'] > 0;
+        case 'none':     return !log_has_system_issue($sum);
+    }
+    return true;   // すべて
+}
+
+/*
+ * 媒体は shop_meta.folder_name の形だけで二分する。
+ *   ヘブン = 数字のみ（例: 99829）
+ *   駅チカ = それ以外すべて（未入力、eki で始まるもの、英字混じり）
+ *
+ * MySQL は比較のときに暗黙の型変換が働き、'eki123' = 0 が真になるなど
+ * 数値として扱うと取りこぼす。文字の形そのものを見たいので REGEXP を使う。
+ */
+$mediaOptions = ['' => 'すべて', 'heaven' => 'ヘブン', 'eki' => '駅チカ'];
+$media = (string)($_GET['media'] ?? '');
+if (!isset($mediaOptions[$media])) {
+    $media = '';
+}
+const FOLDER_IS_DIGITS = "COALESCE(m.folder_name, '') REGEXP '^[0-9]+$'";
 
 // 契約状況は「未指定＝契約中のみ」を初期値にする。
 // 全件を見たいときは 'all' を明示的に選んでもらう（空文字だと url_with() で
@@ -47,6 +95,11 @@ if ($status !== STATUS_ALL) {
     $where[] = 'u.status = ?';
     $params[] = (int)$status;
 }
+if ($media === 'heaven') {
+    $where[] = FOLDER_IS_DIGITS;
+} elseif ($media === 'eki') {
+    $where[] = 'NOT (' . FOLDER_IS_DIGITS . ')';
+}
 $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
 
 $sortMap = [
@@ -54,29 +107,22 @@ $sortMap = [
     'name'   => 'u.username',
     'status' => 'u.status',
     'girls'  => 'girl_active',
-    'last'   => 's.last_success_at',
 ];
 $sort = $_GET['sort'] ?? 'id';
 $col  = $sortMap[$sort] ?? 'u.user_id';
 $dir  = (($_GET['dir'] ?? 'asc') === 'desc') ? 'DESC' : 'ASC';
 
-$canEditMeta    = can_edit();   // 一覧のインライン編集を出すかどうか
-$hasStatusTable = table_exists('exec_status');
-$joinStatus = $hasStatusTable ? 'LEFT JOIN exec_status s ON s.user_id = u.user_id' : '';
-$selStatus  = $hasStatusTable ? 's.last_success_at, s.fail_streak,' : '';
-if (!$hasStatusTable && $sort === 'last') {
-    $col = 'u.user_id';
-}
+$canEditMeta = can_edit();   // 一覧のインライン編集を出すかどうか
 
-// 「異常のみ」で絞るときは、全店舗のログを読まないと件数が確定しない。
+// システム異常で絞るときは、全店舗のログを読まないと件数が確定しない。
 // 絞らないときは、表示する1ページ分だけ読めば足りるので SQL 側でページングする。
+// 媒体と契約状況は SQL の WHERE で絞れるので、どちらの経路でも先に効いている。
 $offset   = ($page - 1) * $perPage;
-$limitSql = $onlyBad ? '' : "\n      LIMIT $perPage OFFSET $offset";
+$limitSql = $issue !== '' ? '' : "\n      LIMIT $perPage OFFSET $offset";
 
 $rows = q(
     "SELECT u.user_id, u.username, u.email, u.status,
-            $selStatus
-            m.folder_name, m.ip_address,
+            m.folder_name,
             COALESCE(g.total, 0)  AS girl_total,
             COALESCE(g.active, 0) AS girl_active
        FROM users u
@@ -84,7 +130,6 @@ $rows = q(
             SELECT shopr_id, COUNT(*) AS total, SUM(kitengirl_status = 1) AS active
               FROM kiten_girl GROUP BY shopr_id
        ) g ON g.shopr_id = u.user_id
-       $joinStatus
        $joinMeta
        $whereSql
       ORDER BY $col $dir" . $limitSql,
@@ -106,8 +151,8 @@ foreach ($rows as $i => $r) {
     $rows[$i]['sum'] = log_day_summary((string)($r['folder_name'] ?? ''), $date);
 }
 
-if ($onlyBad) {
-    $rows  = array_values(array_filter($rows, static fn(array $r): bool => log_has_any_issue($r['sum'])));
+if ($issue !== '') {
+    $rows  = array_values(array_filter($rows, static fn(array $r): bool => issue_matches($issue, $r['sum'])));
     $total = count($rows);
     $rows  = array_slice($rows, $offset, $perPage);
 } else {
@@ -170,11 +215,20 @@ render_head('店舗管理', 'shops');
             </select>
         </div>
         <div class="filter-field">
-            <label>ログ</label>
-            <label class="check-inline">
-                <input type="checkbox" name="bad" value="1"<?= $onlyBad ? ' checked' : '' ?>>
-                異常のみ表示
-            </label>
+            <label for="media">媒体</label>
+            <select id="media" name="media">
+                <?php foreach ($mediaOptions as $v => $lbl): ?>
+                    <option value="<?= h((string)$v) ?>"<?= $media === (string)$v ? ' selected' : '' ?>><?= h($lbl) ?></option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+        <div class="filter-field">
+            <label for="issue">システム異常</label>
+            <select id="issue" name="issue">
+                <?php foreach ($issueOptions as $v => $lbl): ?>
+                    <option value="<?= h((string)$v) ?>"<?= $issue === (string)$v ? ' selected' : '' ?>><?= h($lbl) ?></option>
+                <?php endforeach; ?>
+            </select>
         </div>
         <div class="filter-actions">
             <button class="btn btn-main" type="submit"><i class="fa-solid fa-magnifying-glass"></i>検索</button>
@@ -191,7 +245,8 @@ render_head('店舗管理', 'shops');
         <?php /* 日付だけを変えて、検索条件は保つ */ ?>
         <?php if ($kw !== ''): ?><input type="hidden" name="kw" value="<?= h($kw) ?>"><?php endif; ?>
         <input type="hidden" name="status" value="<?= h($status) ?>">
-        <?php if ($onlyBad): ?><input type="hidden" name="bad" value="1"><?php endif; ?>
+        <?php if ($media !== ''): ?><input type="hidden" name="media" value="<?= h($media) ?>"><?php endif; ?>
+        <?php if ($issue !== ''): ?><input type="hidden" name="issue" value="<?= h($issue) ?>"><?php endif; ?>
         <select name="date" onchange="this.form.submit()">
             <?php foreach ($dateOptions as $d): ?>
                 <option value="<?= h($d) ?>"<?= $d === $date ? ' selected' : '' ?>><?= h(log_date_label($d)) ?></option>
@@ -224,12 +279,10 @@ render_head('店舗管理', 'shops');
             <th style="min-width:150px"><?= sort_link('name', '店舗名') ?></th>
             <th style="width:260px">ログインID</th>
             <th style="width:170px">フォルダ名</th>
-            <th style="width:140px">IP</th>
             <th style="width:110px"><?= sort_link('girls', 'キャスト') ?></th>
             <th style="width:90px"><?= sort_link('status', '契約') ?></th>
             <th style="width:230px">システム異常</th>
             <th style="width:110px">ログイン失敗</th>
-            <?php if ($hasStatusTable): ?><th style="width:120px"><?= sort_link('last', '稼働状況') ?></th><?php endif; ?>
             <th style="width:150px"></th>
         </tr>
         </thead>
@@ -239,7 +292,6 @@ render_head('店舗管理', 'shops');
             $sum      = $r['sum'];
             $logUrl   = 'shop_logs.php?id=' . (int)$r['user_id'] . '&date=' . urlencode($date);
             $folder   = (string)($r['folder_name'] ?? '');
-            $ipAddr   = (string)($r['ip_address'] ?? '');
             $loginId  = (string)($r['email'] ?? '');
             ?>
             <tr<?= log_has_system_issue($sum) ? ' class="row-alert"' : '' ?>>
@@ -251,7 +303,6 @@ render_head('店舗管理', 'shops');
                     <div class="id-col"><?= $loginId !== '' ? h($loginId) : '<span class="soft">—</span>' ?></div>
                 </td>
                 <?= meta_cell($r['user_id'], 'folder_name', $folder, 191, $canEditMeta) ?>
-                <?= meta_cell($r['user_id'], 'ip_address', $ipAddr, 45, $canEditMeta) ?>
                 <td class="num">
                     <?= number_format((int)$r['girl_active']) ?>
                     <span class="soft">/ <?= number_format((int)$r['girl_total']) ?></span>
@@ -267,19 +318,6 @@ render_head('店舗管理', 'shops');
                     <?php endif; ?>
                 </td>
                 <td class="num"><?= log_login_badge($sum) ?></td>
-                <?php if ($hasStatusTable): ?>
-                    <td>
-                        <?php if (!$isActive): ?>
-                            <span class="soft">—</span>
-                        <?php elseif (empty($r['last_success_at'])): ?>
-                            <span class="badge badge-danger">記録なし</span>
-                        <?php else:
-                            $late = time() - strtotime((string)$r['last_success_at']) > (int)cfg('stale_hours', 6) * 3600;
-                            ?>
-                            <span class="badge <?= $late ? 'badge-warn' : 'badge-active' ?>"><?= h(ago($r['last_success_at'])) ?></span>
-                        <?php endif; ?>
-                    </td>
-                <?php endif; ?>
                 <td class="act">
                     <?php if ($sum['verdict'] !== 'nofolder'): ?>
                         <a class="btn btn-outline btn-sm" href="<?= h($logUrl) ?>"><i class="fa-solid fa-list-check"></i>ログ</a>
