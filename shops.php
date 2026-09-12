@@ -172,12 +172,12 @@ render_head('店舗管理', 'shops');
         <thead>
         <tr>
             <th style="width:64px"><?= sort_link('id', 'ID') ?></th>
-            <th style="min-width:150px"><?= sort_link('name', '店舗名') ?></th>
+            <th style="width:140px"><?= sort_link('name', '店舗名') ?></th>
             <th style="width:260px">ログインID</th>
             <th style="width:170px">フォルダ名</th>
             <th style="width:110px"><?= sort_link('girls', 'キャスト') ?></th>
             <th style="width:90px"><?= sort_link('status', '契約') ?></th>
-            <th style="width:230px">システム異常</th>
+            <th style="width:310px">システム異常</th>
             <th style="width:110px">ログイン失敗</th>
             <th style="width:150px"></th>
         </tr>
@@ -327,6 +327,23 @@ render_head('店舗管理', 'shops');
     if (moreBtn) { moreBtn.addEventListener('click', load); }
 
     paint();
+})();
+</script>
+
+<script>
+(function () {
+    // 店舗名は1行に収めて「…」で切っているので、切れているものだけ hover で全体を出す。
+    // 行は後から追加されるので、表全体で受けて必要になったときに title を付ける。
+    var table = document.getElementById('shop-table');
+    if (!table) { return; }
+
+    table.addEventListener('mouseover', function (e) {
+        var el = e.target.closest('#shop-rows td:nth-child(2) .strong');
+        if (!el || el.hasAttribute('title')) { return; }
+        if (el.scrollWidth > el.clientWidth) {
+            el.setAttribute('title', el.textContent.trim());
+        }
+    });
 })();
 </script>
 

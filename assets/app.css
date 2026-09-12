@@ -442,7 +442,43 @@ a:hover { text-decoration: underline; }
 .toast-area .alert-box { margin: 0; box-shadow: 0 4px 16px rgba(0, 0, 0, .14); }
 
 /* 店舗一覧は列が多いので、詰めるより横スクロールさせる（.table-scroll の中） */
-#shop-table { min-width: 1340px; }
+#shop-table { min-width: 1404px; }
+
+/*
+ * 列幅の調整。数字は shops.php の <th style="width:..."> と対になっている。
+ *
+ * システム異常は「時間切れ」「異常キャスト 128」「取りこぼし」の3つが同時に出ることがあり、
+ * 3つぶんで 276px 必要になる。230px では折り返して行の高さが崩れていたので 310px に広げ、
+ * そのぶんを店舗名から回した（店舗名 156px → 140px、不足ぶんは表全体を 64px 広げて吸収）。
+ *
+ * 行の中身は api_shops_more.php の shops_render_rows() が出しているのでクラスを足せない。
+ * ここだけ列の位置（nth-child）で指定している。
+ *   2 = 店舗名 / 7 = システム異常
+ */
+
+/* システム異常。バッジは絶対に折り返さない。 */
+#shop-table tbody td:nth-child(7) {
+    white-space: nowrap;
+    max-width: none;
+}
+/* バッジの間隔を空白文字ではなく gap で作る。空白だと幅が font 任せでばらつく。 */
+#shop-table tbody td:nth-child(7) > a.plain {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+/*
+ * 店舗名。長い名前でも1行に収めて、行の高さを全店舗で揃える。
+ * はみ出したぶんは「…」にして、hover したときだけ全体を出す（shops.php で title を付けている）。
+ * 140px から左右の padding 14px ずつを引いた 112px が中身の幅。
+ */
+#shop-table tbody td:nth-child(2) .strong {
+    max-width: 112px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
 
 /* バッジをそのままリンクにするとき、下線や色を変えない */
 a.plain, a.plain:hover { color: inherit; text-decoration: none; }
