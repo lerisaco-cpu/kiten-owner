@@ -42,6 +42,40 @@ if (!isset($issueOptions[$issue])) {
     $issue = '';
 }
 
+/**
+ * ログイン失敗のキャストを停止する SQL。1行1文、改行区切りで返します。
+ * 作るのは貼り付け用のテキストだけで、この画面から実行はしません。
+ *
+ * shopr_id を条件に入れているのは、himedeco_id だけだと他店舗の同じ ID まで
+ * 巻き込んで更新してしまうためです。必ず両方で絞ります。
+ *
+ * log_day_summary() は loginerr の行数しか持っていないので、ここで中身を読み直します。
+ * 開くのは表示する1ページ分のうち、ログイン失敗が1件以上ある店舗のファイルだけで、
+ * loginerr は多くても数行なので負担はありません。
+ */
+function stop_sql_for(int $userId, array $sum): string
+{
+    $path = $sum['files']['loginerr'] ?? null;
+    if ($path === null) {
+        return '';
+    }
+    $lines = [];
+    foreach (log_rows($path) as $f) {
+        $r = log_row_loginerr($f);
+        // ID が数字だけでない行は飛ばす
+        if (preg_match('/\A[0-9]+\z/', $r['id']) !== 1) {
+            continue;
+        }
+        // 種別はログの値をそのまま使うので、SQL に埋め込む前にエスケープする。
+        // MySQL の既定では \ も引用符の中で意味を持つので、あわせて処理する。
+        $kind = str_replace(['\\', "'"], ['\\\\', "''"], $r['kind']);
+        $lines[] = "UPDATE kiten_girl SET memo = '" . $kind
+                 . "', kitengirl_status ='1' WHERE shopr_id = " . $userId
+                 . ' AND himedeco_id = ' . $r['id'] . ';';
+    }
+    return implode("\n", $lines);
+}
+
 /** 選んだ種類に当てはまるか。条件は log_day_summary() の結果だけで判定する。 */
 function issue_matches(string $issue, array $sum): bool
 {
@@ -157,6 +191,13 @@ if ($issue !== '') {
     $rows  = array_slice($rows, $offset, $perPage);
 } else {
     $total = (int)qv("SELECT COUNT(*) FROM users u $joinMeta $whereSql", $params);
+}
+
+// 表示する行が決まってから、ログイン失敗のある店舗だけ SQL を組み立てる
+foreach ($rows as $i => $r) {
+    $rows[$i]['stop_sql'] = $r['sum']['loginerr'] > 0
+        ? stop_sql_for((int)$r['user_id'], $r['sum'])
+        : '';
 }
 
 /**
@@ -317,7 +358,24 @@ render_head('店舗管理', 'shops');
                         <a class="plain" href="<?= h($logUrl) ?>"><?= log_issue_badges($sum) ?></a>
                     <?php endif; ?>
                 </td>
-                <td class="num"><?= log_login_badge($sum) ?></td>
+                <td class="num">
+                    <?php if ($r['stop_sql'] !== ''):
+                        $stopCount = substr_count($r['stop_sql'], "\n") + 1;
+                        // ID が数字でない行は飛ばすので、ログの件数と文の数がずれることがある。
+                        // 気づかずに少ない件数をコピーしてしまわないよう、印と説明を添える。
+                        $partial = $stopCount < (int)$sum['loginerr'];
+                        ?>
+                        <button type="button" class="badge badge-warn sql-copy-badge"
+                                data-sql="<?= h($r['stop_sql']) ?>"
+                                title="<?= $partial
+                                    ? 'ログイン失敗 ' . (int)$sum['loginerr'] . ' 件のうち、ID が数字の ' . $stopCount . ' 件ぶんだけコピーします。残りは ID が数字でないため対象外です。'
+                                    : 'クリックすると、停止する SQL ' . $stopCount . ' 文をコピーします' ?>">
+                            <?= number_format((int)$sum['loginerr']) ?> 件<?= $partial ? '<span class="badge-partial">*</span>' : '' ?>
+                        </button>
+                    <?php else: ?>
+                        <?= log_login_badge($sum) ?>
+                    <?php endif; ?>
+                </td>
                 <td class="act">
                     <?php if ($sum['verdict'] !== 'nofolder'): ?>
                         <a class="btn btn-outline btn-sm" href="<?= h($logUrl) ?>"><i class="fa-solid fa-list-check"></i>ログ</a>
@@ -332,6 +390,87 @@ render_head('店舗管理', 'shops');
     <?php render_pager($page, $total, $perPage); ?>
     <?php endif; ?>
 </div>
+
+<script>
+(function () {
+    // ログイン失敗のバッジを押すと、そのキャストを停止する SQL をコピーする。
+    // SQL は data-sql に入れて出力済みなので、押したときにサーバーへは問い合わせない。
+    var table = document.getElementById('shop-table');
+    if (!table) { return; }
+
+    function flash(btn, text) {
+        if (btn.dataset.label === undefined) { btn.dataset.label = btn.textContent; }
+        btn.textContent = text;
+        btn.classList.add('is-copied');
+        clearTimeout(btn.dataset.timer);
+        btn.dataset.timer = setTimeout(function () {
+            btn.textContent = btn.dataset.label;
+            btn.classList.remove('is-copied');
+        }, 2000);
+    }
+
+    /** Clipboard API が使えない環境向け。手で選んでコピーしてもらう。 */
+    function manual(sql) {
+        var old = document.getElementById('sql-fallback');
+        if (old) { old.remove(); }
+
+        var box = document.createElement('div');
+        box.id = 'sql-fallback';
+        box.className = 'sql-fallback';
+
+        var head = document.createElement('div');
+        head.className = 'sql-fallback-head';
+        head.textContent = '自動でコピーできませんでした。下の内容を選んでコピーしてください。';
+
+        var ta = document.createElement('textarea');
+        ta.readOnly = true;
+        ta.wrap = 'off';
+        ta.rows = Math.min(8, sql.split('\n').length + 1);
+        ta.value = sql;
+
+        var close = document.createElement('button');
+        close.type = 'button';
+        close.className = 'btn btn-outline btn-sm';
+        close.textContent = '閉じる';
+        close.addEventListener('click', function () { box.remove(); });
+
+        box.appendChild(head);
+        box.appendChild(ta);
+        box.appendChild(close);
+        document.body.appendChild(box);
+        ta.focus();
+        ta.select();
+    }
+
+    table.addEventListener('click', function (e) {
+        var btn = e.target.closest('.sql-copy-badge');
+        if (!btn) { return; }
+        var sql = btn.getAttribute('data-sql') || '';
+        if (sql === '') { return; }
+
+        if (navigator.clipboard && window.isSecureContext) {
+            navigator.clipboard.writeText(sql).then(
+                function () { flash(btn, 'コピーしました'); },
+                function () { manual(sql); }
+            );
+            return;
+        }
+
+        // https でない環境では clipboard API が使えないので、従来の方法を試す
+        var tmp = document.createElement('textarea');
+        tmp.value = sql;
+        tmp.setAttribute('readonly', '');
+        tmp.style.position = 'fixed';
+        tmp.style.top = '-1000px';
+        document.body.appendChild(tmp);
+        tmp.select();
+        var ok = false;
+        try { ok = document.execCommand('copy'); } catch (err) { ok = false; }
+        tmp.remove();
+        if (ok) { flash(btn, 'コピーしました'); } else { manual(sql); }
+    });
+})();
+</script>
 
 <?php if ($canEditMeta): ?>
 <div class="toast-area" id="toast-area"></div>
