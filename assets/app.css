@@ -618,3 +618,24 @@ a.plain, a.plain:hover { color: inherit; text-decoration: none; }
     overflow-x: auto;
     resize: vertical;
 }
+
+/* ================= スクロールでの追加読み込み ================= */
+.infinite-foot {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    padding: 14px 18px;
+    border-top: 1px solid var(--line);
+    background: #fbfcfd;
+}
+.infinite-status { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--text-mid); }
+.infinite-spinner { display: inline-flex; align-items: center; gap: 7px; color: var(--main-color); }
+.infinite-done    { display: inline-flex; align-items: center; gap: 7px; color: var(--ok); }
+.infinite-error   { flex-basis: 100%; font-size: 13px; color: var(--bad); }
+.infinite-foot .btn { margin-left: auto; }
+/*
+ * display を指定した要素には、ブラウザ既定の [hidden]{display:none} が効かない。
+ * JS は hidden 属性で出し分けるので、ここで打ち消しておく。
+ */
+.infinite-foot [hidden] { display: none !important; }
