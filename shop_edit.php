@@ -179,7 +179,7 @@ if ($message !== '') {
                 <label for="exeserver">実行サーバー</label>
                 <div><input type="number" id="exeserver" name="exeserver" value="<?= (int)$shop['exeserver'] ?>"<?= can_edit() ? '' : ' disabled' ?>></div>
             </div>
-            <div class="form-row">
+            <div class="form-row form-row-note">
                 <label for="bunkatsu">サーバー分割数</label>
                 <div>
                     <input type="number" id="bunkatsu" name="bunkatsu" min="0" max="<?= (int)log_split_max() ?>" step="1"
