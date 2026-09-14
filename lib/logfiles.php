@@ -4,9 +4,15 @@ declare(strict_types=1);
 /**
  * iMacros が店舗フォルダに吐き出すログファイルの読み取り。
  *
- * 置き場所は  {log_root}/{folder_name}/{log_subdir}/  で、営業日ごとに5種類のファイルが出ます。
- * サブディレクトリ名は設定で変えられ、空文字にすると店舗フォルダの直下を見ます。
+ * 置き場所は  {log_root}/{folder_name}/{サブディレクトリ}/  で、営業日ごとに5種類のファイルが出ます。
  * データベースは一切見ません。ファイルだけで完結します。
+ *
+ * サブディレクトリは users.bunkatsu（サーバーの分割数）で決まります。
+ *   0 または 1 … 分割なし。log/ を見る（log_subdir の設定）
+ *   N（2以上）  … N分割。log1/ ... logN/ をそれぞれ別のものとして見る（log_subdir_split の設定）
+ *
+ * 分割された店舗は、分割ごとに別の実行とみなします。判定も集計も混ぜません。
+ * この層では分割を「パート番号」で表し、0 が分割なし、1以上が log1 ... logN に対応します。
  *
  * ファイルの共通仕様（実データで確認済み）
  *   - UTF-8 BOM付き（先頭3バイト EF BB BF）
@@ -42,12 +48,88 @@ function log_root(): string
 }
 
 /**
- * 店舗フォルダのどのサブディレクトリにログが入っているか。
+ * 分割なしのときのサブディレクトリ名。
  * 空文字にすると店舗フォルダの直下を見ます。
  */
 function log_subdir(): string
 {
     return trim((string)cfg('log_subdir', 'log'), '/');
+}
+
+/**
+ * 分割ありのときの、n 番目のサブディレクトリ名。
+ * 組み立て方は設定（log_subdir_split）で変えられます。既定は 'log%d' で log1, log2 ...。
+ *
+ * 設定の書き間違いでパスの区切りや .. が混ざると外に出られてしまうので、
+ * 組み立てた結果がフォルダ名として使える文字だけかを必ず確かめ、
+ * だめなら既定の組み立て方に戻します。
+ */
+function log_subdir_at(int $part): string
+{
+    if ($part < 1) {
+        return log_subdir();
+    }
+    $pattern = (string)cfg('log_subdir_split', 'log%d');
+    $name    = trim(sprintf($pattern, $part), '/');
+
+    // 使える文字だけか。あわせて、%d の入れ忘れで全部の分割が同じフォルダを
+    // 指していないかも見る（そのままだと全分割が同じ数字になってしまうため）。
+    if (!log_folder_valid($name) || sprintf($pattern, 1) === sprintf($pattern, 2)) {
+        return 'log' . $part;
+    }
+    return $name;
+}
+
+/**
+ * 1店舗が持てる分割数の上限。
+ * 桁を間違えて大きな値を入れてしまったときに、一覧が何百ものフォルダを
+ * 読みにいって止まらなくなるのを防ぐための歯止めです。
+ */
+function log_split_max(): int
+{
+    return max(1, (int)cfg('log_split_max', 12));
+}
+
+/**
+ * bunkatsu の値から、見るべきパート番号の一覧を作ります。
+ *   0 または 1 → [0]（分割なし）
+ *   N（2以上）  → [1, 2, ... N]
+ */
+function log_parts(int $bunkatsu): array
+{
+    if ($bunkatsu < 2) {
+        return [0];
+    }
+    return range(1, min($bunkatsu, log_split_max()));
+}
+
+/** 分割が2つ以上あるか */
+function log_is_split(int $bunkatsu): bool
+{
+    return count(log_parts($bunkatsu)) > 1;
+}
+
+/**
+ * URL などで渡されたパート番号を、その店舗の分割数の範囲に収めます。
+ * 範囲外なら先頭（分割なしなら 0、分割ありなら 1）に落とします。
+ */
+function log_part_normalize(int $part, int $bunkatsu): int
+{
+    $parts = log_parts($bunkatsu);
+    return in_array($part, $parts, true) ? $part : $parts[0];
+}
+
+/** 画面に出す分割の名前。分割なしは空文字。 */
+function log_part_label(int $part): string
+{
+    return $part < 1 ? '' : 'SV' . $part;
+}
+
+/** 店舗名のうしろに付ける分割の表記。分割なしは何も付けない。 */
+function log_part_suffix(int $part): string
+{
+    $label = log_part_label($part);
+    return $label === '' ? '' : ' (' . $label . ')';
 }
 
 /** 「残数があるのに走査数がこれ未満」なら、リストが読めていないと見なす */
@@ -104,14 +186,16 @@ function log_shop_dir(string $folder): ?string
 }
 
 /**
- * ログが入っているディレクトリの実パス（{log_root}/{folder}/{log_subdir}）。
+ * ログが入っているディレクトリの実パス（{log_root}/{folder}/{サブディレクトリ}）。
+ * $part は 0 が分割なし（log/）、1以上が分割ぶん（log1/ ... logN/）です。
  * 読めない場合や、ルートの外を指した場合は null。
  *
  * 文字種のチェックを通っていても、シンボリックリンクで外に出られる可能性があるので
  * realpath() で「ログのルート配下」に収まっていることを必ず確かめます。
  * 確認の基準はあくまで log_root であって、店舗フォルダやサブディレクトリではありません。
+ * 分割ぶんの log1 / log2 も、同じ確認を通します。
  */
-function log_dir(string $folder): ?string
+function log_dir(string $folder, int $part = 0): ?string
 {
     if (!log_folder_valid($folder)) {
         return null;
@@ -122,7 +206,7 @@ function log_dir(string $folder): ?string
     }
 
     $path = $root . DIRECTORY_SEPARATOR . $folder;
-    $sub  = log_subdir();
+    $sub  = log_subdir_at($part);
     if ($sub !== '') {
         $path .= DIRECTORY_SEPARATOR . $sub;
     }
@@ -139,13 +223,13 @@ function log_dir(string $folder): ?string
 }
 
 /** ログファイルの実パス。無ければ null。 */
-function log_file_path(string $folder, string $kind, string $date): ?string
+function log_file_path(string $folder, string $kind, string $date, int $part = 0): ?string
 {
     $kinds = log_kinds();
     if (!isset($kinds[$kind]) || !log_date_valid($date)) {
         return null;
     }
-    $dir = log_dir($folder);
+    $dir = log_dir($folder, $part);
     if ($dir === null) {
         return null;
     }
@@ -188,12 +272,13 @@ function log_date_label(string $date): string
 }
 
 /**
- * そのフォルダに存在する営業日の一覧（新しい順）。
+ * そのフォルダ（分割ありならその分割）に存在する営業日の一覧（新しい順）。
  * ファイル名から日付を拾うだけなので、中身は読みません。
+ * 分割ごとに残っている日付が違うことがあるので、パート番号を必ず渡します。
  */
-function log_available_dates(string $folder): array
+function log_available_dates(string $folder, int $part = 0): array
 {
-    $dir = log_dir($folder);
+    $dir = log_dir($folder, $part);
     if ($dir === null) {
         return [];
     }
@@ -411,7 +496,8 @@ function log_count_rows(string $path): int
 }
 
 /**
- * 1店舗・1営業日のまとめ。一覧・詳細のどちらもこれを使います。
+ * 1店舗・1営業日・1分割のまとめ。一覧・詳細のどちらもこれを使います。
+ * 分割されている店舗は分割ごとに呼び出します。合算はしません。
  *
  * verdict は
  *   nofolder … フォルダ未設定、または名前が不正で読めない
@@ -419,10 +505,11 @@ function log_count_rows(string $path): int
  *   timeout  … FINISH が無い（件数に対して処理時間が足りず完走できていない）
  *   done     … FINISH あり
  */
-function log_day_summary(string $folder, string $date): array
+function log_day_summary(string $folder, string $date, int $part = 0): array
 {
     $out = [
         'verdict'   => 'nofolder',
+        'part'      => $part,
         'start'     => 0,
         'report'    => 0,
         'loginerr'  => 0,
@@ -439,15 +526,16 @@ function log_day_summary(string $folder, string $date): array
     if ($folder === '' || !log_folder_valid($folder)) {
         return $out;
     }
-    // 名前は妥当だが、ログのディレクトリがまだ無い（log サブディレクトリ未作成など）。
-    // 設定漏れではないので「ファイルなし」として扱う。
-    if (log_dir($folder) === null) {
+    // 名前は妥当だが、ログのディレクトリがまだ無い。
+    // 分割数が2なのに log2 がまだ作られていない、という状態もここに来る。
+    // 設定漏れではないので「ファイルなし」として扱い、画面は落とさない。
+    if (log_dir($folder, $part) === null) {
         $out['verdict'] = 'nofile';
         return $out;
     }
 
     foreach (array_keys(log_kinds()) as $kind) {
-        $out['files'][$kind] = log_file_path($folder, $kind, $date);
+        $out['files'][$kind] = log_file_path($folder, $kind, $date, $part);
     }
 
     $statusPath = $out['files']['status'] ?? null;

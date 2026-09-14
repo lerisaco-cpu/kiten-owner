@@ -106,6 +106,11 @@ DELETE FROM exec_log WHERE started_at < DATE_SUB(NOW(), INTERVAL 90 DAY) LIMIT 1
 - `users.ktype` がプラン区分
 - `kiten_girl.kitengirl_status` は 1 が稼働中
 - `users.exeserver` の正常値は 0〜3
+- `users.bunkatsu` はサーバーの分割数。0 または 1 は分割なしで、ログは `{フォルダ名}/log/`。
+  2 以上なら `{フォルダ名}/log1/` 〜 `logN/` を**別々の実行として**扱います（合算しません）。
+  店舗一覧では分割の数だけ行が分かれ、ログ画面では SV1 / SV2 … を切り替えて見ます。
+  サブディレクトリ名の作り方は `log_subdir` / `log_subdir_split`、分割数の上限は
+  `log_split_max` で変えられます。
 
 ## 注意点
 

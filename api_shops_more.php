@@ -8,6 +8,11 @@
  * 追加読み込みでは、必要な範囲だけを読みます。SQL 側の読み出し位置を
  * db_offset として受け取り、そこから必要な件数が揃うまでだけ進めるので、
  * 1回の追加で全店舗のログを読み直すことはありません。
+ *
+ * 一覧の1行は「1店舗」ではなく「1店舗の1分割」です。users.bunkatsu が2以上の店舗は
+ * 分割の数だけ行が増え、行ごとに log1 / log2 ... を別々に読んで判定します。
+ * 区切りも行単位なので、店舗の途中でページが切れることがあります。その場合は
+ * part_offset に「その店舗の何番目の分割まで出したか」を入れて続きから再開します。
  */
 require_once __DIR__ . '/lib/bootstrap.php';
 require_once __DIR__ . '/lib/logfiles.php';
@@ -123,7 +128,7 @@ function shops_select_sql(array $p, string $whereSql): string
     $col = shops_sort_map()[$p['sort']] ?? 'u.user_id';
     $dir = $p['dir'] === 'desc' ? 'DESC' : 'ASC';
 
-    return "SELECT u.user_id, u.username, u.email, u.status,
+    return "SELECT u.user_id, u.username, u.email, u.status, u.bunkatsu,
                    m.folder_name,
                    COALESCE(g.total, 0)  AS girl_total,
                    COALESCE(g.active, 0) AS girl_active
@@ -182,24 +187,32 @@ function stop_sql_for(int $userId, array $sum): string
 }
 
 /**
- * SQL の読み出し位置 $dbOffset から、表示できる行が $want 件たまるまでだけ進めます。
+ * SQL の読み出し位置 $dbOffset（と、その店舗の $partOffset 番目の分割）から、
+ * 表示できる行が $want 件たまるまでだけ進めます。
  *
- * 戻り値の consumed は「SQL から何行読んだか」で、次の呼び出しの起点になります。
+ * 戻り値の consumed は「SQL から何店舗ぶん読み終えたか」で、次の呼び出しの起点になります。
+ * 店舗の途中で $want に達したときは、その店舗を consumed に数えず、代わりに part_offset に
+ * 続きの位置を入れます。こうすることで、同じ行を二度出すことも、飛ばすこともありません。
+ *
  * システム異常で絞っているときは読んだ行の一部しか残らないので、表示件数ではなく
- * この値を持ち回ることで、同じ行を二度読むことも、全件を読み直すこともありません。
+ * この2つを持ち回ります。全件を読み直すことはありません。
  *
- * 1店舗あたり読むログは status / report / loginerr の3つだけです。
- * mitene_report と okini_report は開きません。
+ * 1分割あたり読むログは status / report / loginerr の3つだけです。
+ * mitene_report と okini_report は開きません。分割数ぶん読む回数は増えますが、
+ * 読むファイルの種類は分割なしのときと同じです。
  */
-function shops_fetch(array $p, int $dbOffset, int $want): array
+function shops_fetch(array $p, int $dbOffset, int $partOffset, int $want): array
 {
     [$whereSql, $params] = shops_where($p);
     $sql   = shops_select_sql($p, $whereSql);
     $chunk = max($want, 50);
 
     $rows      = [];
-    $consumed  = 0;
+    $consumed  = 0;                      // 読み終えた店舗の数
+    $skip      = max(0, $partOffset);    // 最初の店舗で、すでに出し終えている分割の数
+    $nextPart  = 0;                      // 次の呼び出しに渡す part_offset
     $exhausted = false;
+    $filled    = false;
 
     while (count($rows) < $want) {
         $batch = q($sql . ' LIMIT ' . $chunk . ' OFFSET ' . ($dbOffset + $consumed), $params);
@@ -209,39 +222,65 @@ function shops_fetch(array $p, int $dbOffset, int $want): array
             break;
         }
 
-        $seen = 0;
         foreach ($batch as $r) {
-            $seen++;
-            $consumed++;
-            $r['sum'] = log_day_summary((string)($r['folder_name'] ?? ''), $p['date']);
-            if ($p['issue'] !== '' && !issue_matches($p['issue'], $r['sum'])) {
-                continue;
+            $folder = (string)($r['folder_name'] ?? '');
+            $parts  = log_parts((int)$r['bunkatsu']);
+            $total  = count($parts);
+
+            for ($i = $skip; $i < $total; $i++) {
+                $row         = $r;
+                $row['part'] = $parts[$i];
+                $row['sum']  = log_day_summary($folder, $p['date'], $parts[$i]);
+
+                if ($p['issue'] === '' || issue_matches($p['issue'], $row['sum'])) {
+                    // 表示する行だけ SQL を組み立てる。分割ごとの loginerr から作る。
+                    $row['stop_sql'] = $row['sum']['loginerr'] > 0
+                        ? stop_sql_for((int)$r['user_id'], $row['sum'])
+                        : '';
+                    $rows[] = $row;
+                }
+
+                if (count($rows) >= $want) {
+                    $nextPart = $i + 1;
+                    $filled   = true;
+                    break;
+                }
             }
-            // 表示する行だけ SQL を組み立てる
-            $r['stop_sql'] = $r['sum']['loginerr'] > 0 ? stop_sql_for((int)$r['user_id'], $r['sum']) : '';
-            $rows[] = $r;
-            if (count($rows) >= $want) {
+
+            $skip = 0;
+            if ($filled) {
+                // ちょうど最後の分割で埋まったなら、その店舗は読み終えている
+                if ($nextPart >= $total) {
+                    $consumed++;
+                    $nextPart = 0;
+                }
                 break;
             }
+            $consumed++;
         }
 
-        // 取り切ったところで表の終わりに達していれば、これ以上は無い
-        if ($n < $chunk && $seen === $n) {
-            $exhausted = true;
+        if ($filled) {
             break;
         }
-        if (count($rows) >= $want) {
+        // 取り切ったところで表の終わりに達していれば、これ以上は無い
+        if ($n < $chunk) {
+            $exhausted = true;
             break;
         }
     }
 
-    return ['rows' => $rows, 'consumed' => $consumed, 'exhausted' => $exhausted];
+    return [
+        'rows'        => $rows,
+        'consumed'    => $consumed,
+        'part_offset' => $nextPart,
+        'exhausted'   => $exhausted,
+    ];
 }
 
 /**
- * 条件に合う総件数。
+ * 条件に合う総件数。数えるのは店舗数ではなく、画面に出る行数です。
  *
- * システム異常で絞らないときは COUNT(*) で足ります。
+ * システム異常で絞らないときは、分割数を足し上げるだけで済みます。
  * 絞るときはログを読まないと分からないので全店舗を1度だけ数えますが、
  * これは画面を開いたときの1回だけで、追加読み込みでは呼びません。
  */
@@ -250,16 +289,22 @@ function shops_total(array $p): int
     [$whereSql, $params] = shops_where($p);
 
     if ($p['issue'] === '') {
+        // 1店舗が何行になるかは log_parts() と同じ考え方。0/1 は1行、N は N行（上限まで）。
+        $max = log_split_max();
         return (int)qv(
-            "SELECT COUNT(*) FROM users u LEFT JOIN shop_meta m ON m.user_id = u.user_id $whereSql",
+            "SELECT COALESCE(SUM(CASE WHEN u.bunkatsu >= 2 THEN LEAST(u.bunkatsu, $max) ELSE 1 END), 0)
+               FROM users u LEFT JOIN shop_meta m ON m.user_id = u.user_id $whereSql",
             $params
         );
     }
 
     $n = 0;
     foreach (q(shops_select_sql($p, $whereSql), $params) as $r) {
-        if (issue_matches($p['issue'], log_day_summary((string)($r['folder_name'] ?? ''), $p['date']))) {
-            $n++;
+        $folder = (string)($r['folder_name'] ?? '');
+        foreach (log_parts((int)$r['bunkatsu']) as $part) {
+            if (issue_matches($p['issue'], log_day_summary($folder, $p['date'], $part))) {
+                $n++;
+            }
         }
     }
     return $n;
@@ -294,14 +339,21 @@ function shops_render_rows(array $rows, string $date, bool $canEdit): void
     foreach ($rows as $r) {
         $isActive = (int)$r['status'] === $activeValue;
         $sum      = $r['sum'];
-        $logUrl   = 'shop_logs.php?id=' . (int)$r['user_id'] . '&date=' . urlencode($date);
         $folder   = (string)($r['folder_name'] ?? '');
         $loginId  = (string)($r['email'] ?? '');
+        // 分割されている店舗は、その分割のログ画面へ直接つなぐ
+        $part     = (int)($r['part'] ?? 0);
+        $svLabel  = log_part_label($part);
+        $logUrl   = 'shop_logs.php?id=' . (int)$r['user_id'] . '&date=' . urlencode($date)
+                  . ($part >= 1 ? '&sv=' . $part : '');
         ?>
         <tr<?= log_has_system_issue($sum) ? ' class="row-alert"' : '' ?>>
             <td class="id-col"><?= (int)$r['user_id'] ?></td>
-            <td>
-                <div class="strong"><a href="shop_edit.php?id=<?= (int)$r['user_id'] ?>"><?= h($r['username']) ?></a></div>
+            <td class="name-cell">
+                <div class="strong">
+                    <a class="name-text" href="shop_edit.php?id=<?= (int)$r['user_id'] ?>"><?= h($r['username']) ?></a>
+                    <?php if ($svLabel !== ''): ?><span class="sv-tag"><?= h($svLabel) ?></span><?php endif; ?>
+                </div>
             </td>
             <td class="wrapcell">
                 <div class="id-col"><?= $loginId !== '' ? h($loginId) : '<span class="soft">—</span>' ?></div>
@@ -314,7 +366,7 @@ function shops_render_rows(array $rows, string $date, bool $canEdit): void
             <td>
                 <span class="badge <?= $isActive ? 'badge-active' : 'badge-inactive' ?>"><?= h(label_of('status_labels', $r['status'])) ?></span>
             </td>
-            <td class="wrapcell">
+            <td class="issue-cell">
                 <?php if ($sum['verdict'] === 'nofolder'): ?>
                     <?= log_issue_badges($sum) ?>
                 <?php else: ?>
@@ -331,9 +383,9 @@ function shops_render_rows(array $rows, string $date, bool $canEdit): void
                     ?>
                     <button type="button" class="badge badge-warn sql-copy-badge"
                             data-sql="<?= h($r['stop_sql']) ?>"
-                            title="<?= h($partial
+                            title="<?= h(($svLabel !== '' ? $svLabel . ' の' : '') . ($partial
                                 ? 'ログイン失敗 ' . (int)$sum['loginerr'] . ' 件のうち、ID が数字の ' . $stopCount . ' 件ぶんだけコピーします。残りは ID が数字でないため対象外です。'
-                                : 'クリックすると、停止する SQL ' . $stopCount . ' 文をコピーします') ?>">
+                                : 'ログイン失敗です。クリックすると、停止する SQL ' . $stopCount . ' 文をコピーします')) ?>">
                         <?= number_format((int)$sum['loginerr']) ?> 件<?= $partial ? '<span class="badge-partial">*</span>' : '' ?>
                     </button>
                 <?php else: ?>
@@ -378,12 +430,14 @@ if (current_admin() === null) {
 }
 require_login();
 
-$p        = shops_params($_GET);
-$perPage  = (int)cfg('per_page', 50);
-$dbOffset = max(0, (int)($_GET['db_offset'] ?? 0));
+$p          = shops_params($_GET);
+$perPage    = (int)cfg('per_page', 50);
+$dbOffset   = max(0, (int)($_GET['db_offset'] ?? 0));
+// 前回が店舗の途中で切れていたら、その続きの分割から再開する
+$partOffset = max(0, (int)($_GET['part_offset'] ?? 0));
 
 try {
-    $got = shops_fetch($p, $dbOffset, $perPage);
+    $got = shops_fetch($p, $dbOffset, $partOffset, $perPage);
 
     ob_start();
     shops_render_rows($got['rows'], $p['date'], can_edit());
@@ -395,9 +449,10 @@ try {
 }
 
 shops_more_out(200, [
-    'ok'        => true,
-    'html'      => $html,
-    'count'     => count($got['rows']),
-    'db_offset' => $dbOffset + $got['consumed'],
-    'more'      => !$got['exhausted'],
+    'ok'          => true,
+    'html'        => $html,
+    'count'       => count($got['rows']),
+    'db_offset'   => $dbOffset + $got['consumed'],
+    'part_offset' => $got['part_offset'],
+    'more'        => !$got['exhausted'],
 ]);

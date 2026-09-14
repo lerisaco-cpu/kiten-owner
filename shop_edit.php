@@ -25,7 +25,7 @@ if ($shop === null) {
 }
 
 // 稼働中システムが読んでいるテーブルなので、書き換えを許すカラムは限定する
-$editable = ['status', 'ktype', 'tantou', 'tel', 'bank', 'etc', 'exeserver'];
+$editable = ['status', 'ktype', 'tantou', 'tel', 'bank', 'etc', 'exeserver', 'bunkatsu'];
 
 // shop_meta 側の項目。値は運営が見るためのメモなので、形式チェックはせず桁数だけ守る。
 $metaLimits = ['folder_name' => 191, 'ip_address' => 45];
@@ -47,6 +47,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $old = (string)$shop[$colName];
         if (in_array($colName, ['status', 'ktype', 'exeserver'], true)) {
             $new = (string)(int)$new;
+        } elseif ($colName === 'bunkatsu') {
+            // 分割数。負の値は入れさせない。上限は log_split_max() に合わせる
+            // （これを超える値を入れても、一覧やログ画面はそこまでしか見ないため）。
+            $new = (string)min(max(0, (int)$new), log_split_max());
         }
         if ($new !== $old) {
             $sets[]   = "`$colName` = ?";
@@ -126,8 +130,15 @@ if ($message !== '') {
 
 <div class="page-actions">
     <?php $logFolder = (string)$shop['folder_name']; ?>
+    <?php
+    // 分割されている店舗は、まず SV1 を開く。画面側で SV2 以降に切り替えられる。
+    $logParts = log_parts((int)$shop['bunkatsu']);
+    $logSv    = $logParts[0];
+    ?>
     <?php if ($logFolder !== '' && log_folder_valid($logFolder)): ?>
-        <a class="btn btn-main" href="shop_logs.php?id=<?= $id ?>"><i class="fa-solid fa-list-check"></i>ログを見る</a>
+        <a class="btn btn-main" href="shop_logs.php?id=<?= $id ?><?= $logSv >= 1 ? '&sv=' . $logSv : '' ?>">
+            <i class="fa-solid fa-list-check"></i>ログを見る<?= count($logParts) > 1 ? '（' . h(log_part_label($logSv)) . '）' : '' ?>
+        </a>
     <?php else: ?>
         <button class="btn btn-outline" type="button" disabled
                 title="<?= $logFolder === '' ? 'フォルダ名が未設定です' : 'フォルダ名に使えない文字が含まれています' ?>">
@@ -167,6 +178,18 @@ if ($message !== '') {
             <div class="form-row">
                 <label for="exeserver">実行サーバー</label>
                 <div><input type="number" id="exeserver" name="exeserver" value="<?= (int)$shop['exeserver'] ?>"<?= can_edit() ? '' : ' disabled' ?>></div>
+            </div>
+            <div class="form-row">
+                <label for="bunkatsu">サーバー分割数</label>
+                <div>
+                    <input type="number" id="bunkatsu" name="bunkatsu" min="0" max="<?= (int)log_split_max() ?>" step="1"
+                           value="<?= (int)$shop['bunkatsu'] ?>"<?= can_edit() ? '' : ' disabled' ?>>
+                    <div class="field-note">
+                        0 または 1 なら分割なしで、ログは <code>log</code> フォルダから読みます。
+                        2 以上にすると分割ありとして、<code>log1</code>〜<code>log<?= max(2, (int)$shop['bunkatsu']) ?></code>
+                        を別々に読み、店舗一覧でも分割の数だけ行が分かれます。
+                    </div>
+                </div>
             </div>
             <div class="form-row">
                 <label for="tantou">担当者</label>

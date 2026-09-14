@@ -7,7 +7,7 @@ require_login();
 $id = (int)($_GET['id'] ?? 0);
 
 $shop = q1(
-    "SELECT u.user_id, u.username,
+    "SELECT u.user_id, u.username, u.bunkatsu,
             COALESCE(m.folder_name, '') AS folder_name,
             COALESCE(m.ip_address,  '') AS ip_address
        FROM users u
@@ -31,11 +31,28 @@ $folder = (string)$shop['folder_name'];
 // 画面にはシステム上のパスを一切出さない。
 $folderOk = $folder !== '' && log_folder_valid($folder);
 
-$dates = $folderOk ? log_available_dates($folder) : [];
+/*
+ * サーバーの分割。bunkatsu が2以上なら log1 / log2 ... を切り替えて見る。
+ * URL の sv は、その店舗の分割数の範囲に収める。範囲外なら先頭（SV1）に落とす。
+ * 見るのは選択中の分割のログだけで、他の分割とは混ぜない。
+ */
+$parts   = log_parts((int)$shop['bunkatsu']);
+$isSplit = count($parts) > 1;
+$sv      = log_part_normalize((int)($_GET['sv'] ?? 0), (int)$shop['bunkatsu']);
+$svLabel = log_part_label($sv);
+
+/** 分割の選択を保ったままリンクを作る。範囲外の sv をそのまま持ち回らないよう、値は正規化済みのものを使う。 */
+function sv_url(array $over, int $sv): string
+{
+    $over['sv'] = $sv >= 1 ? $sv : null;   // 分割なしのときは URL に出さない
+    return url_with($over);
+}
+
+$dates = $folderOk ? log_available_dates($folder, $sv) : [];
 
 // ログが読めない理由を画面で言い分けるための材料。パスそのものは使いません。
 $shopDirExists = $folderOk && log_shop_dir($folder) !== null;
-$logDirExists  = $folderOk && log_dir($folder) !== null;
+$logDirExists  = $folderOk && log_dir($folder, $sv) !== null;
 
 // 日付。指定が無ければ最新の営業日。その日が無ければフォルダにある一番新しい日。
 $date = (string)($_GET['date'] ?? '');
@@ -55,7 +72,7 @@ if (!isset($tabs[$tab])) {
 $perPage = log_per_page();
 $page    = max(1, (int)($_GET['page'] ?? 1));
 
-$sum = log_day_summary($folder, $date);
+$sum = log_day_summary($folder, $date, $sv);
 
 /**
  * 選択中のタブのファイルを1回だけ流し、表示するページ分の行だけを取り出します。
@@ -127,7 +144,7 @@ foreach ($dates as $d) {
     if ($d > $date) {
         continue;
     }
-    $trend[] = ['date' => $d, 'sum' => log_day_summary($folder, $d)];
+    $trend[] = ['date' => $d, 'sum' => log_day_summary($folder, $d, $sv)];
     if (count($trend) >= 7) {
         break;
     }
@@ -135,10 +152,10 @@ foreach ($dates as $d) {
 
 $badNames = array_map(static fn(array $r): string => $r['name'], $sum['bad']);
 
-render_head($shop['username'] . ' の稼働ログ', 'shops');
+render_head($shop['username'] . log_part_suffix($sv) . ' の稼働ログ', 'shops');
 crumbs([
     '店舗管理' => 'shops.php',
-    $shop['username'] . '（ID ' . (int)$shop['user_id'] . '）' => null,
+    $shop['username'] . log_part_suffix($sv) . '（ID ' . (int)$shop['user_id'] . '）' => null,
 ]);
 ?>
 
@@ -157,13 +174,31 @@ crumbs([
     <?php render_foot(); exit; ?>
 <?php endif; ?>
 
+<?php if ($isSplit): ?>
+<div class="sv-tabs">
+    <span class="sv-tabs-label"><i class="fa-solid fa-server"></i>サーバー分割</span>
+    <?php foreach ($parts as $pnum):
+        // そのフォルダが無い分割は、押す前から分かるようにしておく
+        $exists = $folderOk && log_dir($folder, $pnum) !== null;
+        ?>
+        <a class="log-tab<?= $pnum === $sv ? ' on' : '' ?><?= $exists ? '' : ' is-missing' ?>"
+           href="<?= h(sv_url(['page' => 1], $pnum)) ?>">
+            <?= h(log_part_label($pnum)) ?>
+            <?php if (!$exists): ?><span class="soft">（フォルダなし）</span><?php endif; ?>
+        </a>
+    <?php endforeach; ?>
+    <span class="sv-tabs-note">分割ごとに別々に集計しています。合算した数字ではありません。</span>
+</div>
+<?php endif; ?>
+
 <div class="date-nav">
-    <a class="btn btn-outline btn-sm" href="<?= h(url_with(['date' => log_date_shift($date, -1), 'page' => 1])) ?>">
+    <a class="btn btn-outline btn-sm" href="<?= h(sv_url(['date' => log_date_shift($date, -1), 'page' => 1], $sv)) ?>">
         <i class="fa-solid fa-chevron-left"></i>前日
     </a>
     <form method="get" action="shop_logs.php" class="date-nav-form">
         <input type="hidden" name="id" value="<?= (int)$shop['user_id'] ?>">
         <input type="hidden" name="tab" value="<?= h($tab) ?>">
+        <?php if ($sv >= 1): ?><input type="hidden" name="sv" value="<?= (int)$sv ?>"><?php endif; ?>
         <select name="date" onchange="this.form.submit()">
             <?php if (!$dates): ?>
                 <option value="<?= h($date) ?>"><?= h(log_date_label($date)) ?></option>
@@ -178,10 +213,15 @@ crumbs([
         </select>
         <noscript><button class="btn btn-outline btn-sm" type="submit">表示</button></noscript>
     </form>
-    <a class="btn btn-outline btn-sm" href="<?= h(url_with(['date' => log_date_shift($date, 1), 'page' => 1])) ?>">
+    <a class="btn btn-outline btn-sm" href="<?= h(sv_url(['date' => log_date_shift($date, 1), 'page' => 1], $sv)) ?>">
         翌日<i class="fa-solid fa-chevron-right"></i>
     </a>
-    <span class="date-nav-current">フォルダ <?= h($folder) ?></span>
+    <span class="date-nav-current">
+        フォルダ <?= h($folder) ?><?= $svLabel !== '' ? '（' . h($svLabel) . '）' : '' ?>
+        <?php if ($isSplit): ?>
+            <span class="soft">この分割にあるログの日付だけを並べています</span>
+        <?php endif; ?>
+    </span>
 </div>
 
 <div class="summary-row">
@@ -204,12 +244,14 @@ crumbs([
             <?php if (!$shopDirExists): ?>
                 フォルダ「<?= h($folder) ?>」が見つかりません。店舗詳細でフォルダ名を確認してください。
             <?php elseif (!$logDirExists): ?>
-                フォルダ「<?= h($folder) ?>」にログの入るサブディレクトリがまだありません。
+                フォルダ「<?= h($folder) ?>」に<?= $svLabel !== '' ? h($svLabel) . ' の' : '' ?>ログの入るサブディレクトリがまだありません。
                 ログの出力が始まると、ここに営業日ごとの記録が並びます。
             <?php elseif (!$dates): ?>
-                このフォルダにはまだログがありません。ログの出力が始まると、ここに営業日ごとの記録が並びます。
+                <?= $svLabel !== '' ? 'この分割（' . h($svLabel) . '）' : 'このフォルダ' ?>にはまだログがありません。
+                ログの出力が始まると、ここに営業日ごとの記録が並びます。
             <?php else: ?>
-                <?= h(log_date_label($date)) ?> のログはこのフォルダにありません。上の日付から別の営業日を選んでください。
+                <?= h(log_date_label($date)) ?> のログは<?= $svLabel !== '' ? 'この分割（' . h($svLabel) . '）' : 'このフォルダ' ?>にありません。
+                上の日付から別の営業日を選んでください。
             <?php endif; ?>
         </div>
     </div>
@@ -249,7 +291,7 @@ crumbs([
         <div>
             <strong>ログイン失敗が <?= number_format($sum['loginerr']) ?> 件</strong>
             あります。店舗側のアカウントの問題なので、システム異常とは別に確認してください。
-            <a href="<?= h(url_with(['tab' => 'loginerr', 'page' => 1])) ?>">loginerr タブを開く</a>
+            <a href="<?= h(sv_url(['tab' => 'loginerr', 'page' => 1], $sv)) ?>">loginerr タブを開く</a>
         </div>
     </div>
 <?php endif; ?>
@@ -260,7 +302,7 @@ crumbs([
             $exists = !empty($sum['files'][$key]);
             ?>
             <a class="log-tab<?= $key === $tab ? ' on' : '' ?><?= $exists ? '' : ' is-missing' ?>"
-               href="<?= h(url_with(['tab' => $key, 'page' => 1])) ?>">
+               href="<?= h(sv_url(['tab' => $key, 'page' => 1], $sv)) ?>">
                 <i class="fa-solid <?= h($meta['icon']) ?>"></i><?= h($meta['label']) ?>
                 <?php if (!$exists): ?><span class="soft">（なし）</span><?php endif; ?>
             </a>
@@ -504,7 +546,7 @@ crumbs([
             ?>
             <tr<?= $t['date'] === $date ? ' class="row-on"' : '' ?>>
                 <td>
-                    <a href="<?= h(url_with(['date' => $t['date'], 'page' => 1])) ?>"><?= h(log_date_label($t['date'])) ?></a>
+                    <a href="<?= h(sv_url(['date' => $t['date'], 'page' => 1], $sv)) ?>"><?= h(log_date_label($t['date'])) ?></a>
                 </td>
                 <td><?= log_verdict_badge($ts['verdict']) ?></td>
                 <td class="num"><?= number_format($ts['start']) ?></td>

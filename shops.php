@@ -60,17 +60,22 @@ $mediaOptions = shops_media_options();
  * 開かない（ミテネは1日1,300行を超えることがあるため）。status も START行・FINISHの有無・
  * 最終行だけを1回流して拾い、全行を配列に貯めない。
  *
- * 続きはスクロールに合わせて api_shops_more.php から取る。そのとき起点になるのが
- * $dbOffset（SQL から何行読んだか）で、追加読み込みでは必要な範囲しか読まない。
+ * 1行は「1店舗の1分割」。bunkatsu が2以上の店舗は分割の数だけ行が増え、
+ * 行ごとに log1 / log2 ... を別々に読んで判定する（合算しない）。
  *
- * 総件数は、システム異常で絞らないときは COUNT(*)。絞るときだけログを読んで数えるが、
- * それはこの初回表示の1回だけで、追加読み込みでは行わない。
+ * 続きはスクロールに合わせて api_shops_more.php から取る。そのとき起点になるのが
+ * $dbOffset（何店舗ぶん読み終えたか）と $partOffset（その店舗の何番目の分割まで出したか）で、
+ * 追加読み込みでは必要な範囲しか読まない。
+ *
+ * 総件数も行数で数える。システム異常で絞らないときは分割数の足し上げだけで済み、
+ * 絞るときだけログを読んで数えるが、それはこの初回表示の1回だけ。
  */
-$total    = shops_total($p);
-$first    = shops_fetch($p, 0, $perPage);
-$rows     = $first['rows'];
-$dbOffset = $first['consumed'];
-$hasMore  = !$first['exhausted'];
+$total      = shops_total($p);
+$first      = shops_fetch($p, 0, 0, $perPage);
+$rows       = $first['rows'];
+$dbOffset   = $first['consumed'];
+$partOffset = $first['part_offset'];
+$hasMore    = !$first['exhausted'];
 
 function sort_link(string $key, string $labelText): string
 {
@@ -172,7 +177,7 @@ render_head('店舗管理', 'shops');
         <thead>
         <tr>
             <th style="width:64px"><?= sort_link('id', 'ID') ?></th>
-            <th style="width:140px"><?= sort_link('name', '店舗名') ?></th>
+            <th style="width:248px"><?= sort_link('name', '店舗名') ?></th>
             <th style="width:260px">ログインID</th>
             <th style="width:170px">フォルダ名</th>
             <th style="width:110px"><?= sort_link('girls', 'キャスト') ?></th>
@@ -192,6 +197,7 @@ render_head('店舗管理', 'shops');
          data-total="<?= (int)$total ?>"
          data-loaded="<?= count($rows) ?>"
          data-offset="<?= (int)$dbOffset ?>"
+         data-part="<?= (int)$partOffset ?>"
          data-more="<?= $hasMore ? '1' : '0' ?>"
          data-query="<?= h(http_build_query([
              'date'   => $date,
@@ -247,6 +253,8 @@ render_head('店舗管理', 'shops');
     var total    = parseInt(foot.dataset.total, 10) || 0;
     var loaded   = parseInt(foot.dataset.loaded, 10) || 0;
     var dbOffset = parseInt(foot.dataset.offset, 10) || 0;
+    // 前回が店舗の途中で切れたときの続きの位置（分割されている店舗でだけ 0 以外になる）
+    var partOff  = parseInt(foot.dataset.part, 10) || 0;
     var hasMore  = foot.dataset.more === '1';
     var query    = foot.dataset.query || '';
     var busy     = false;
@@ -271,7 +279,7 @@ render_head('店舗管理', 'shops');
         errorEl.hidden = true;
         if (moreBtn) { moreBtn.disabled = true; }
 
-        fetch('api_shops_more.php?' + query + '&db_offset=' + dbOffset, {
+        fetch('api_shops_more.php?' + query + '&db_offset=' + dbOffset + '&part_offset=' + partOff, {
             credentials: 'same-origin',
             headers: { 'Accept': 'application/json' }
         }).then(function (res) {
@@ -296,6 +304,7 @@ render_head('店舗管理', 'shops');
             }
             loaded  += data.count;
             dbOffset = data.db_offset;
+            partOff  = data.part_offset || 0;
             hasMore  = !!data.more && data.count > 0;
             busy = false;
             spinner.hidden = true;
@@ -338,7 +347,7 @@ render_head('店舗管理', 'shops');
     if (!table) { return; }
 
     table.addEventListener('mouseover', function (e) {
-        var el = e.target.closest('#shop-rows td:nth-child(2) .strong');
+        var el = e.target.closest('#shop-rows .name-cell .name-text');
         if (!el || el.hasAttribute('title')) { return; }
         if (el.scrollWidth > el.clientWidth) {
             el.setAttribute('title', el.textContent.trim());
@@ -547,9 +556,16 @@ render_head('店舗管理', 'shops');
             });
         }).then(function (data) {
             td.classList.remove('is-saving');
-            td.setAttribute('data-value', data.value);   // 桁数を超えた分はサーバー側で切られる
-            render(td);
-            flash(td, 'is-saved');
+            // 分割されている店舗は同じ店舗の行が並ぶので、同じ項目のセルをまとめて直す
+            var same = table.querySelectorAll(
+                'td.meta-cell[data-id="' + td.getAttribute('data-id') + '"]'
+                + '[data-field="' + td.getAttribute('data-field') + '"]'
+            );
+            Array.prototype.forEach.call(same, function (cell) {
+                cell.setAttribute('data-value', data.value);   // 桁数を超えた分はサーバー側で切られる
+                if (!cell.classList.contains('is-editing')) { render(cell); }
+                flash(cell, 'is-saved');
+            });
         }).catch(function (err) {
             td.classList.remove('is-saving');
             render(td);                                  // data-value は変えていないので元の値に戻る
